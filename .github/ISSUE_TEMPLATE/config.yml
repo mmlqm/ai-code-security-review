@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security boundary
+    url: https://github.com/mmlqm/ai-code-security-review
+    about: This project handles offline defensive code review only.

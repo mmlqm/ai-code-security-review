@@ -9,6 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate commit or PR title
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            subject="${{ github.event.pull_request.title }}"
+          else
+            subject="$(git log -1 --pretty=%s)"
+          fi
+          echo "Checking subject: ${subject}"
+          if ! printf '%s' "${subject}" | grep -Eq '^(feat|fix|docs|test|ci|chore|refactor|perf|build|style|revert)(\([a-z0-9_.-]+\))?: .{1,120}$'; then
+            echo "::error title=Invalid commit format::Use Conventional Commits, for example: feat(scanner): add custom rules"
+            exit 1
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

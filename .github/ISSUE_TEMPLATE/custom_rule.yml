@@ -1,0 +1,36 @@
+name: Custom rule proposal
+description: Propose a built-in or example policy rule.
+title: "feat(rule): "
+labels: ["rule"]
+body:
+  - type: input
+    id: rule_id
+    attributes:
+      label: Rule id
+      placeholder: policy-no-legacy-auth
+    validations:
+      required: true
+  - type: textarea
+    id: pattern
+    attributes:
+      label: Pattern and scope
+      description: Include regex, extensions or filenames, and examples that should match.
+    validations:
+      required: true
+  - type: textarea
+    id: non_matches
+    attributes:
+      label: Non-matches
+      description: Examples that should not match.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - CRITICAL
+        - HIGH
+        - MEDIUM
+        - LOW
+        - INFO
+    validations:
+      required: true

@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a defensive review capability.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What review gap should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the command, config, report output, or rule behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Boundary
+      options:
+        - Offline static review
+        - CI/reporting workflow
+        - Skill documentation
+        - Other defensive use
+    validations:
+      required: true

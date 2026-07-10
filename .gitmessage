@@ -1,0 +1,16 @@
+<type>(<scope>): <short summary>
+
+Why:
+- 
+
+What changed:
+- 
+
+Validation:
+- 
+
+Types: feat, fix, docs, test, ci, chore, refactor, perf, build, style, revert
+Examples:
+feat(scanner): add custom TOML policy rules
+fix(baseline): ignore selected baseline file during scans
+ci(validate): enforce commit and PR title format
