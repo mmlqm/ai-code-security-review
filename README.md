@@ -1,8 +1,8 @@
 # AI Code Security Review
 
-Offline, stdlib-only security review for AI-generated or rapidly shipped code.
+Offline, stdlib-only security review for AI-generated or rapidly shipped code, with Claude/Codex-ready AI-assisted deep audit workflows.
 
-This repository packages a Codex skill and a deterministic local scanner for release gates. It is designed for the moment before code lands: catch hardcoded secrets, authorization placeholders, unsafe defaults, injection sinks, weak crypto, risky deployment settings, dependency hygiene gaps, and missing delivery safeguards without installing external scanners or calling network services.
+This repository packages a Codex skill, Claude/Codex agent metadata, a deterministic local scanner, and an AI review-pack generator. It is designed for the moment before code lands: catch hardcoded secrets, authorization placeholders, unsafe defaults, injection sinks, weak crypto, risky deployment settings, dependency hygiene gaps, and missing delivery safeguards without installing external scanners or calling network services. Then hand a compact, redacted review pack to Claude or Codex for deeper reasoning across files.
 
 ## Why It Exists
 
@@ -31,14 +31,39 @@ Catches: secrets, obvious sinks, config     Catches: logic flaws, data flow,
 
 Read `references/deep-analysis.md` for the full LLM-driven deep review methodology.
 
+### Claude/Codex AI-Assisted Review
+
+Generate a review pack for Codex:
+
+```bash
+python scripts/ai_review_pack.py . --agent codex --depth deep --output ai-code-review-pack.md
+```
+
+Generate a review pack for Claude:
+
+```bash
+python scripts/ai_review_pack.py . --agent claude --depth deep --output ai-code-review-pack.md
+```
+
+For PR/MR review, include only changed files:
+
+```bash
+git diff --name-only origin/main...HEAD > changed.txt
+python scripts/ai_review_pack.py . --agent codex --changed-files-from changed.txt
+```
+
+The pack includes scanner output, redacted findings, security-sensitive file hotspots, and a platform-specific prompt. It does not call Claude, Codex, OpenAI, Anthropic, or any network service by itself.
+
 ## Features
 
 - **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
 - **LLM deep analysis** — Seven-dimension security review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
+- **AI review pack generator** — `scripts/ai_review_pack.py` creates Claude/Codex-ready Markdown from local scanner results.
 - Text, JSON, Markdown, and SARIF reports.
 - CI-friendly exit codes with configurable severity thresholds.
 - GitHub Actions annotations.
 - Custom TOML policy rules for team-specific checks.
+- Example configuration in `.audit-code.example.toml`.
 - `.auditignore` support for generated files and large repository hygiene.
 - Incremental scans with explicit changed-file lists.
 - Colorized terminal output for local use.
@@ -95,12 +120,24 @@ List active rules:
 python scripts/audit_code.py . --list-rules
 ```
 
+Build an AI-assisted review pack:
+
+```bash
+python scripts/ai_review_pack.py . --agent codex --depth deep
+```
+
 ## Configuration
 
 Generate a starter config:
 
 ```bash
 python scripts/audit_code.py . --init-config
+```
+
+Or copy and edit the checked-in example:
+
+```bash
+cp .audit-code.example.toml .audit-code.toml
 ```
 
 Example `.audit-code.toml`:
@@ -211,6 +248,7 @@ ai-code-security-review/
 │   ├── deep-analysis.md             # LLM deep review methodology (7 dimensions)
 │   └── review-policy.md             # Severity guidance + triage rules
 ├── scripts/
+│   ├── ai_review_pack.py            # Claude/Codex AI-assisted review pack generator
 │   ├── audit_code.py                # Deterministic fast-gate scanner engine
 │   └── rules_builtin.py             # 48 built-in detection rule catalog
 └── tests/

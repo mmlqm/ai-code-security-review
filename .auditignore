@@ -5,3 +5,4 @@ coverage/**
 generated/**
 *.sarif
 *.zip
+ai-code-review-pack*.md

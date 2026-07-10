@@ -1,4 +1,4 @@
 interface:
   display_name: "AI Code Security Review"
-  short_description: "Offline code security gate and review"
-  default_prompt: "Use $ai-code-security-review to run an offline code security review of this repository, then triage findings and report release blockers first."
+  short_description: "Claude/Codex AI-assisted code audit"
+  default_prompt: "Use $ai-code-security-review to run the offline scanner, generate a Codex-ready AI review pack when useful, then triage release blockers before hardening items."

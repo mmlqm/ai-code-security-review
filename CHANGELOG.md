@@ -10,6 +10,8 @@ This project uses Conventional Commits for commit messages.
 
 - LLM deep-analysis workflow with seven review dimensions and structured report guidance.
 - Agent metadata for Codex/OpenAI and Claude-oriented review workflows.
+- Claude/Codex AI-assisted review-pack generator in `scripts/ai_review_pack.py`.
+- Ready-to-edit scanner policy template in `.audit-code.example.toml`.
 - Built-in rules split into `scripts/rules_builtin.py`.
 - `.auditignore` support.
 - Incremental changed-file scanning with `--changed-files` and `--changed-files-from`.

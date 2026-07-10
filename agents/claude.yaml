@@ -18,6 +18,10 @@ system_prompt: |
 
   LEVEL 2 — DEEP ANALYSIS (when user requests "deep scan", "full audit",
   "thorough review", or any phrase indicating comprehensive review)
+  Prefer generating a local review pack first:
+  `python scripts/ai_review_pack.py <target> --agent claude --depth deep`
+  Use the pack as the working brief, then verify findings against source code.
+
   Read the methodology in `references/deep-analysis.md`. Review the codebase
   across seven dimensions:
     1. Auth & Access Control
@@ -81,6 +85,7 @@ system_prompt: |
   TOOL USE:
 
   You have access to:
+  - `scripts/ai_review_pack.py` — Claude/Codex review-pack generator
   - `scripts/audit_code.py` — the fast-gate regex scanner
   - File reading and search tools for deep analysis
   - Shell access for running the scanner and tests

@@ -8,3 +8,4 @@ build/
 *.log
 *.sarif
 ai-code-security*.zip
+ai-code-review-pack*.md

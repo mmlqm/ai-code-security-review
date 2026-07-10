@@ -10,6 +10,12 @@ Run:
 python scripts/audit_code.py . --init-config
 ```
 
+Or copy the checked-in example:
+
+```bash
+cp .audit-code.example.toml .audit-code.toml
+```
+
 Important settings:
 
 - `fail_on`: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `none`.
@@ -49,6 +55,17 @@ python scripts/audit_code.py . --changed-files app/auth.py web/server.ts
 ```
 
 Project-level delivery checks still run. Use a baseline when existing project-level debt should not fail new changes.
+
+The same changed-file list can drive an AI-assisted Claude/Codex review pack:
+
+```bash
+python scripts/ai_review_pack.py . --agent codex --changed-files-from changed.txt
+python scripts/ai_review_pack.py . --agent claude --changed-files-from changed.txt
+```
+
+The pack keeps configuration local: scanner settings come from `.audit-code.toml`,
+generated artifacts are excluded through `.auditignore`, and the resulting
+Markdown is intended to be copied into the reviewing agent.
 
 ## Custom Rules
 

@@ -1,0 +1,36 @@
+[settings]
+fail_on = "HIGH"
+include_tests = false
+max_file_size = 524288
+disabled_rules = []
+exclude = [
+  "dist/**",
+  "build/**",
+  "coverage/**",
+  "generated/**",
+  "ai-code-review-pack*.md",
+]
+
+# Team policy example: block a deprecated internal auth helper.
+[[rules]]
+id = "policy-no-legacy-auth"
+title = "Legacy auth helper is disallowed"
+severity = "HIGH"
+category = "policy"
+pattern = "\\blegacy_authenticate\\b"
+remediation = "Use the central auth middleware or approved identity provider integration."
+extensions = [".py", ".js", ".ts", ".tsx"]
+scan_comments = false
+confidence = "high"
+
+# Multi-line policy example for unsafe cross-line constructs.
+[[rules]]
+id = "policy-cross-line-unsafe-template"
+title = "Unsafe template construction across lines"
+severity = "MEDIUM"
+category = "policy"
+pattern = "BEGIN_UNSAFE\\s+END_UNSAFE"
+remediation = "Remove the unsafe template construction or replace it with a typed builder."
+scan_mode = "sliding_window"
+window_lines = 4
+confidence = "medium"

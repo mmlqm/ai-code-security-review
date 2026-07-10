@@ -1,13 +1,13 @@
 ---
 name: ai-code-security-review
-description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, authorization placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookie settings, Docker/Kubernetes risks, dependency hygiene, missing tests, missing CI, custom team policy rules, .auditignore exclusions, incremental changed-file scans, baselines for existing findings, GitHub Actions annotations, colorized terminal output, or text, JSON, Markdown, and SARIF security reports. Supports deep LLM-driven analysis across seven dimensions (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture). This skill is for code review and delivery gating only; it does not perform network reconnaissance, vulnerability scanning of live targets, exploitation, credential attacks, or bypass generation.
+description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, auth placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookies, Docker/Kubernetes risks, dependency hygiene, missing tests/CI, custom policy rules, .auditignore exclusions, incremental scans, baselines, GitHub Actions annotations, or text/JSON/Markdown/SARIF reports. Adapts to Claude and Codex with AI-assisted review packs, agent metadata, easy TOML configuration, and deep seven-dimension LLM analysis. Defensive code review only; no live reconnaissance, target scanning, exploitation, credential attacks, or bypass generation.
 ---
 
 # AI Code Security Review
 
 ## Overview
 
-Review application code before release using a two-layer defense:
+Review application code before release using a two-layer defense that works well in both Claude and Codex:
 
 1. **Fast Gate** - `audit_code.py`: deterministic, zero-dependency regex scanner. Catches hardcoded secrets, obvious injection sinks, weak crypto, and misconfigurations in <100ms. Runs on every commit.
 
@@ -40,6 +40,24 @@ python scripts/audit_code.py /path/to/repo --fail-on HIGH
 # JSON for machine consumption
 python scripts/audit_code.py /path/to/repo --format json --fail-on none
 ```
+
+### AI-Assisted Deep Analysis (Claude / Codex)
+
+Generate a model-ready review pack:
+
+```bash
+# Codex-oriented pack
+python scripts/ai_review_pack.py /path/to/repo --agent codex --depth deep
+
+# Claude-oriented pack
+python scripts/ai_review_pack.py /path/to/repo --agent claude --depth deep
+
+# PR/MR changed-file pack
+python scripts/ai_review_pack.py /path/to/repo --changed-files-from changed.txt
+```
+
+The pack contains scanner output, redacted findings, security hotspots, changed
+files, and a platform-specific prompt. It does not call any external AI service.
 
 ### Deep Analysis (PR review / pre-release)
 
@@ -100,13 +118,16 @@ python scripts/audit_code.py /path/to/repo --changed-files-from changed.txt
 
 # Force color for local terminal review
 python scripts/audit_code.py /path/to/repo --color always
+
+# Build a Claude/Codex review pack from scanner results
+python scripts/ai_review_pack.py /path/to/repo --agent codex --depth deep
 ```
 
 Formats: `text`, `json`, `markdown`, `sarif`.
 
 Fail thresholds: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `none`.
 
-Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, multi-line scan modes, and default gate settings. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
+Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, multi-line scan modes, and default gate settings. Copy `.audit-code.example.toml` for a ready-to-edit template. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
 
 ## Deep Analysis Prompt Templates
 
@@ -192,8 +213,10 @@ Keep the work defensive and code-focused:
 
 | Resource | Purpose |
 |----------|---------|
+| `scripts/ai_review_pack.py` | Claude/Codex AI-assisted review pack generator |
 | `scripts/audit_code.py` | Deterministic fast-gate scanner, config loader, report renderer |
 | `scripts/rules_builtin.py` | 48 built-in detection rules |
+| `.audit-code.example.toml` | Ready-to-edit scanner and policy configuration template |
 | `references/deep-analysis.md` | Full LLM deep analysis methodology with 7 dimension prompts |
 | `references/review-policy.md` | Triage and reporting guidance |
 | `references/configuration.md` | Config, custom rules, baseline, and suppression guidance |
