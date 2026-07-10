@@ -67,6 +67,87 @@ class AuditCodeTests(unittest.TestCase):
             self.assertEqual(len(sarif["runs"]), 1)
             self.assertIn("tool", sarif["runs"][0])
 
+    def test_custom_rule_from_toml_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                ".audit-code.toml",
+                """
+[[rules]]
+id = "policy-no-acme-sdk"
+title = "Disallowed SDK"
+severity = "HIGH"
+category = "policy"
+pattern = "\\\\bacme_legacy_sdk\\\\b"
+remediation = "Use the approved internal SDK."
+extensions = [".py"]
+""",
+            )
+            self.write(root, "service.py", "import acme_legacy_sdk\n")
+
+            report = audit_code.scan_project(root)
+            rule_ids = {finding.rule_id for finding in report.findings}
+
+            self.assertIn("policy-no-acme-sdk", rule_ids)
+            self.assertTrue(audit_code.should_fail(report, "HIGH"))
+
+    def test_inline_suppression_filters_known_false_positive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "auth.py",
+                "def allowed(user):\n"
+                "    return True  # auth bypass audit-code: ignore auth-placeholder\n",
+            )
+
+            report = audit_code.scan_project(root)
+            rule_ids = {finding.rule_id for finding in report.findings}
+
+            self.assertNotIn("auth-placeholder", rule_ids)
+            self.assertGreaterEqual(report.summary.suppressed_findings, 1)
+
+    def test_baseline_filters_existing_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = root / "baseline.json"
+            self.write(root, "auth.py", "def allowed(user):\n    return True  # auth bypass\n")
+
+            first_report = audit_code.scan_project(root)
+            audit_code.write_baseline(first_report, baseline)
+            second_report = audit_code.scan_project(root, baseline=baseline)
+
+            self.assertGreater(len(first_report.findings), 0)
+            self.assertEqual(second_report.findings, [])
+            self.assertGreater(second_report.summary.baseline_findings, 0)
+
+    def test_rule_listing_includes_custom_origin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                ".audit-code.toml",
+                """
+[[rules]]
+id = "policy-no-foo"
+title = "No Foo"
+severity = "LOW"
+category = "policy"
+pattern = "foo"
+remediation = "Remove foo."
+""",
+            )
+
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                exit_code = audit_code.main([str(root), "--list-rules", "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            rules = json.loads(stream.getvalue())
+            custom = [rule for rule in rules if rule["id"] == "policy-no-foo"]
+            self.assertEqual(custom[0]["origin"], "custom")
+
 
 if __name__ == "__main__":
     unittest.main()

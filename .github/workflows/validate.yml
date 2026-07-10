@@ -14,5 +14,7 @@ jobs:
           python-version: "3.12"
       - name: Run tests
         run: python -m unittest discover -s tests -p "test_*.py"
+      - name: List active rules
+        run: python scripts/audit_code.py . --list-rules
       - name: Run offline code security review
-        run: python scripts/audit_code.py . --format text --fail-on HIGH
+        run: python scripts/audit_code.py . --format text --fail-on HIGH --github-annotations

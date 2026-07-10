@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import math
 import os
@@ -24,7 +25,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Pattern
+from typing import Any, Callable, Iterable, Pattern
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None
 
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
@@ -71,6 +77,10 @@ _SECRET_ASSIGNMENT_RE = re.compile(
     r"private[_-]?key|access[_-]?key)\b\s*[:=]\s*[\"'])([^\"']+)([\"'])"
 )
 
+CONFIG_FILENAMES = (".audit-code.toml", "audit-code.toml")
+SUPPRESS_RE = re.compile(r"audit-code:\s*(ignore|ignore-next-line)(?:\s+([^#/\r\n]+))?", re.IGNORECASE)
+RULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{1,96}$")
+
 
 Validator = Callable[[re.Match[str], str, Path], bool]
 
@@ -90,6 +100,7 @@ class AuditRule:
     scan_comments: bool = False
     sensitive_boost: bool = False
     validator: str = ""
+    origin: str = "builtin"
 
     def matches_file(self, path: Path) -> bool:
         if not self.extensions and not self.filenames:
@@ -114,6 +125,7 @@ class AuditFinding:
     remediation: str
     confidence: str = "medium"
     cwe: str = ""
+    fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -128,6 +140,7 @@ class AuditFinding:
             "remediation": self.remediation,
             "confidence": self.confidence,
             "cwe": self.cwe,
+            "fingerprint": self.fingerprint,
         }
 
 
@@ -140,6 +153,8 @@ class AuditSummary:
     counts: dict[str, int]
     score: int
     status: str
+    suppressed_findings: int = 0
+    baseline_findings: int = 0
     generated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -151,6 +166,8 @@ class AuditSummary:
             "counts": self.counts,
             "score": self.score,
             "status": self.status,
+            "suppressed_findings": self.suppressed_findings,
+            "baseline_findings": self.baseline_findings,
             "generated_at": self.generated_at,
         }
 
@@ -165,6 +182,18 @@ class AuditReport:
             "summary": self.summary.to_dict(),
             "findings": [f.to_dict() for f in self.findings],
         }
+
+
+@dataclass
+class AuditConfig:
+    include_tests: bool = False
+    max_file_size: int = 512 * 1024
+    fail_on: str = "HIGH"
+    disabled_rules: set[str] = field(default_factory=set)
+    exclude: tuple[str, ...] = ()
+    baseline: str = ""
+    custom_rules: list[AuditRule] = field(default_factory=list)
+    config_path: str = ""
 
 
 def _rx(pattern: str, flags: int = re.IGNORECASE) -> Pattern[str]:
@@ -402,11 +431,174 @@ def _rules() -> list[AuditRule]:
     ]
 
 
+def _load_config(
+    project_root: Path,
+    config_path: str | os.PathLike[str] | None,
+    *,
+    no_config: bool = False,
+) -> AuditConfig:
+    if no_config:
+        return AuditConfig()
+    path: Path | None = Path(config_path).expanduser() if config_path else None
+    if path is None:
+        for filename in CONFIG_FILENAMES:
+            candidate = project_root / filename
+            if candidate.exists():
+                path = candidate
+                break
+    if path is None:
+        return AuditConfig()
+    if tomllib is None:
+        raise RuntimeError("TOML config requires Python 3.11+ tomllib")
+    if not path.exists():
+        raise FileNotFoundError(f"Config file does not exist: {path}")
+
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    settings = data.get("settings", {})
+    if settings and not isinstance(settings, dict):
+        raise ValueError("[settings] must be a table")
+
+    config = AuditConfig(config_path=str(path))
+    if "include_tests" in settings:
+        config.include_tests = bool(settings["include_tests"])
+    if "max_file_size" in settings:
+        config.max_file_size = _as_int(settings["max_file_size"], "settings.max_file_size")
+    if "fail_on" in settings:
+        config.fail_on = _as_severity_or_none(settings["fail_on"], "settings.fail_on")
+    if "disabled_rules" in settings:
+        config.disabled_rules = set(_as_str_list(settings["disabled_rules"], "settings.disabled_rules"))
+    if "exclude" in settings:
+        config.exclude = tuple(_as_str_list(settings["exclude"], "settings.exclude"))
+    if "baseline" in settings:
+        config.baseline = str(settings["baseline"])
+
+    raw_rules = data.get("rules", [])
+    if raw_rules and not isinstance(raw_rules, list):
+        raise ValueError("[[rules]] must be an array of tables")
+    config.custom_rules = [_rule_from_config(rule, path, index + 1) for index, rule in enumerate(raw_rules)]
+    return config
+
+
+def _rule_from_config(raw: Any, config_path: Path, index: int) -> AuditRule:
+    if not isinstance(raw, dict):
+        raise ValueError(f"rules[{index}] must be a table")
+    required = ("id", "title", "severity", "category", "pattern", "remediation")
+    missing = [field_name for field_name in required if not raw.get(field_name)]
+    if missing:
+        raise ValueError(f"{config_path}: rules[{index}] missing required fields: {', '.join(missing)}")
+
+    rule_id = str(raw["id"]).strip()
+    if not RULE_ID_RE.match(rule_id):
+        raise ValueError(f"{config_path}: rules[{index}].id is invalid: {rule_id}")
+    severity = _as_severity(raw["severity"], f"rules[{index}].severity")
+    ignore_case = bool(raw.get("ignore_case", True))
+    multiline = bool(raw.get("multiline", False))
+    flags = 0
+    if ignore_case:
+        flags |= re.IGNORECASE
+    if multiline:
+        flags |= re.MULTILINE
+    try:
+        pattern = re.compile(str(raw["pattern"]), flags)
+    except re.error as exc:
+        raise ValueError(f"{config_path}: rules[{index}].pattern is not valid regex: {exc}") from exc
+
+    return AuditRule(
+        id=rule_id,
+        title=str(raw["title"]),
+        severity=severity,
+        category=str(raw["category"]),
+        pattern=pattern,
+        remediation=str(raw["remediation"]),
+        cwe=str(raw.get("cwe", "")),
+        confidence=str(raw.get("confidence", "medium")),
+        extensions=tuple(ext.lower() for ext in _as_str_list(raw.get("extensions", []), f"rules[{index}].extensions")),
+        filenames=tuple(name.lower() for name in _as_str_list(raw.get("filenames", []), f"rules[{index}].filenames")),
+        scan_comments=bool(raw.get("scan_comments", False)),
+        sensitive_boost=bool(raw.get("sensitive_boost", False)),
+        origin="custom",
+    )
+
+
+def _as_int(value: Any, label: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be an integer")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be an integer") from exc
+
+
+def _as_severity(value: Any, label: str) -> str:
+    severity = str(value).upper()
+    if severity not in SEVERITY_RANK:
+        raise ValueError(f"{label} must be one of {', '.join(SEVERITIES)}")
+    return severity
+
+
+def _as_severity_or_none(value: Any, label: str) -> str:
+    severity = str(value).upper()
+    if severity in ("NONE", "NEVER", "OFF"):
+        return severity
+    return _as_severity(severity, label)
+
+
+def _as_str_list(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a string or list of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{label} must contain only strings")
+        items.append(item)
+    return items
+
+
+def _load_baseline(path: Path, project_root: Path) -> set[str]:
+    resolved = path if path.is_absolute() else project_root / path
+    if not resolved.exists():
+        raise FileNotFoundError(f"Baseline file does not exist: {resolved}")
+    data = json.loads(resolved.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        fingerprints = data.get("fingerprints")
+        if fingerprints is None:
+            fingerprints = [finding.get("fingerprint") for finding in data.get("findings", []) if isinstance(finding, dict)]
+    elif isinstance(data, list):
+        fingerprints = data
+    else:
+        raise ValueError("Baseline must be a JSON object or list")
+    return {str(fingerprint) for fingerprint in fingerprints if fingerprint}
+
+
+def write_baseline(report: AuditReport, path: str | os.PathLike[str]) -> None:
+    payload = {
+        "version": 1,
+        "generated_at": time.time(),
+        "fingerprints": sorted({finding.fingerprint for finding in report.findings if finding.fingerprint}),
+        "findings": [finding.to_dict() for finding in report.findings],
+    }
+    Path(path).expanduser().write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _all_rules(config: AuditConfig | None = None) -> list[AuditRule]:
+    config = config or AuditConfig()
+    return [rule for rule in (_rules() + config.custom_rules) if rule.id not in config.disabled_rules]
+
+
 def scan_project(
     root: str | os.PathLike[str],
     *,
     include_tests: bool = False,
     max_file_size: int = 512 * 1024,
+    config_path: str | os.PathLike[str] | None = None,
+    no_config: bool = False,
+    disabled_rules: Iterable[str] = (),
+    exclude: Iterable[str] = (),
+    baseline: str | os.PathLike[str] | None = None,
 ) -> AuditReport:
     """Scan a file or repository and return a structured audit report."""
     root_path = Path(root).expanduser().resolve()
@@ -414,12 +606,27 @@ def scan_project(
         raise FileNotFoundError(f"Path does not exist: {root_path}")
 
     project_root = root_path.parent if root_path.is_file() else root_path
-    rules = _rules()
+    config = _load_config(project_root, config_path, no_config=no_config)
+    include_tests = bool(include_tests or config.include_tests)
+    if max_file_size == 512 * 1024 and config.max_file_size:
+        max_file_size = config.max_file_size
+    disabled = set(config.disabled_rules) | {rule_id for rule_id in disabled_rules}
+    excludes = tuple(config.exclude) + tuple(exclude)
+    rules = [rule for rule in (_rules() + config.custom_rules) if rule.id not in disabled]
+    baseline_path = Path(baseline).expanduser() if baseline else (Path(config.baseline).expanduser() if config.baseline else None)
+    baseline_fingerprints = _load_baseline(baseline_path, project_root) if baseline_path else set()
+    if baseline_path:
+        resolved_baseline = (baseline_path if baseline_path.is_absolute() else project_root / baseline_path).resolve()
+        try:
+            excludes = excludes + (resolved_baseline.relative_to(project_root).as_posix(),)
+        except ValueError:
+            pass
     findings: list[AuditFinding] = []
     scanned = 0
     skipped = 0
+    suppressed = 0
 
-    for path, was_skipped in _iter_candidate_files(root_path, include_tests, max_file_size):
+    for path, was_skipped in _iter_candidate_files(root_path, include_tests, max_file_size, excludes):
         if was_skipped:
             skipped += 1
             continue
@@ -429,12 +636,23 @@ def scan_project(
             skipped += 1
             continue
         scanned += 1
-        findings.extend(_scan_file(path, project_root, text, rules))
+        file_findings, file_suppressed = _scan_file(path, project_root, text, rules)
+        findings.extend(file_findings)
+        suppressed += file_suppressed
 
     if root_path.is_dir():
         findings.extend(_project_level_checks(project_root))
 
     findings = _dedupe_findings(findings)
+    baseline_count = 0
+    if baseline_fingerprints:
+        kept: list[AuditFinding] = []
+        for finding in findings:
+            if finding.fingerprint in baseline_fingerprints:
+                baseline_count += 1
+                continue
+            kept.append(finding)
+        findings = kept
     findings.sort(key=lambda f: (-SEVERITY_RANK[f.severity], f.path, f.line, f.rule_id))
     counts = {sev: 0 for sev in SEVERITIES}
     for finding in findings:
@@ -455,6 +673,8 @@ def scan_project(
         counts=counts,
         score=score,
         status=status,
+        suppressed_findings=suppressed,
+        baseline_findings=baseline_count,
     )
     return AuditReport(summary=summary, findings=findings)
 
@@ -487,17 +707,22 @@ def _iter_candidate_files(
     root: Path,
     include_tests: bool,
     max_file_size: int,
+    exclude: Iterable[str] = (),
 ) -> Iterable[tuple[Path, bool]]:
     if root.is_file():
         yield root, not _is_candidate(root, max_file_size)
         return
 
+    exclude_patterns = tuple(exclude)
     for dirpath, dirnames, filenames in os.walk(root):
         current = Path(dirpath)
         dirnames[:] = [d for d in dirnames if d not in DEFAULT_IGNORED_DIRS]
         for filename in filenames:
             path = current / filename
             rel = _rel(path, root)
+            if _matches_any_glob(rel, exclude_patterns):
+                yield path, True
+                continue
             if not include_tests and _is_test_path(rel):
                 continue
             yield path, not _is_candidate(path, max_file_size)
@@ -505,6 +730,8 @@ def _iter_candidate_files(
 
 def _is_candidate(path: Path, max_file_size: int) -> bool:
     name = path.name.lower()
+    if name in {".audit-baseline.json", "audit-baseline.json", "ai-code-security-baseline.json"}:
+        return False
     if name.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tar")):
         return False
     try:
@@ -519,6 +746,39 @@ def _is_candidate(path: Path, max_file_size: int) -> bool:
     return False
 
 
+def _matches_any_glob(rel_path: str, patterns: Iterable[str]) -> bool:
+    normalized = rel_path.replace("\\", "/")
+    for pattern in patterns:
+        pat = pattern.replace("\\", "/")
+        if fnmatch.fnmatch(normalized, pat) or fnmatch.fnmatch(Path(normalized).name, pat):
+            return True
+    return False
+
+
+def _parse_suppressions(line: str) -> tuple[set[str], set[str]]:
+    current: set[str] = set()
+    next_line: set[str] = set()
+    for match in SUPPRESS_RE.finditer(line):
+        target = current if match.group(1).lower() == "ignore" else next_line
+        raw_rules = (match.group(2) or "*").strip()
+        if not raw_rules:
+            raw_rules = "*"
+        for token in re.split(r"[\s,]+", raw_rules):
+            token = token.strip()
+            if token:
+                target.add(token)
+    return current, next_line
+
+
+def _is_suppressed(rule_id: str, suppressions: set[str]) -> bool:
+    return "*" in suppressions or "all" in suppressions or rule_id in suppressions
+
+
+def _fingerprint(finding: AuditFinding) -> str:
+    material = f"{finding.rule_id}\0{finding.path}\0{finding.snippet}"
+    return hashlib.sha256(material.encode("utf-8", errors="replace")).hexdigest()[:20]
+
+
 def _read_text(path: Path) -> str:
     raw = path.read_bytes()
     if b"\x00" in raw:
@@ -529,12 +789,19 @@ def _read_text(path: Path) -> str:
         return raw.decode("latin-1")
 
 
-def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]) -> list[AuditFinding]:
+def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]) -> tuple[list[AuditFinding], int]:
     rel = _rel(path, project_root)
     findings: list[AuditFinding] = []
+    suppressed = 0
+    next_line_suppressions: dict[int, set[str]] = {}
     for line_no, line in enumerate(text.splitlines(), 1):
         if len(line) > 5000:
             continue
+        current_suppressions = set(next_line_suppressions.pop(line_no, set()))
+        line_suppressions, next_suppressions = _parse_suppressions(line)
+        current_suppressions.update(line_suppressions)
+        if next_suppressions:
+            next_line_suppressions.setdefault(line_no + 1, set()).update(next_suppressions)
         is_comment = _is_probable_comment(line, path.suffix.lower())
         for rule in rules:
             if not rule.matches_file(path):
@@ -546,8 +813,12 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
                 continue
             if rule.validator and not _validate(rule.validator, match, line, path):
                 continue
+            if _is_suppressed(rule.id, current_suppressions):
+                suppressed += 1
+                continue
             severity = _effective_severity(rule, rel)
-            findings.append(AuditFinding(
+            snippet = _redact(line.strip())
+            finding = AuditFinding(
                 rule_id=rule.id,
                 title=rule.title,
                 severity=severity,
@@ -555,12 +826,14 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
                 path=rel,
                 line=line_no,
                 column=max(match.start() + 1, 1),
-                snippet=_redact(line.strip()),
+                snippet=snippet,
                 remediation=rule.remediation,
                 confidence=rule.confidence,
                 cwe=rule.cwe,
-            ))
-    return findings
+            )
+            finding.fingerprint = _fingerprint(finding)
+            findings.append(finding)
+    return findings, suppressed
 
 
 def _project_level_checks(root: Path) -> list[AuditFinding]:
@@ -624,7 +897,7 @@ def _project_finding(
     *,
     path: str = ".",
 ) -> AuditFinding:
-    return AuditFinding(
+    finding = AuditFinding(
         rule_id=rule_id,
         title=title,
         severity=severity,
@@ -636,6 +909,8 @@ def _project_finding(
         remediation=remediation,
         confidence="high",
     )
+    finding.fingerprint = _fingerprint(finding)
+    return finding
 
 
 def _validate(name: str, match: re.Match[str], line: str, path: Path) -> bool:
@@ -809,6 +1084,7 @@ def _render_text(report: AuditReport, *, limit: int) -> str:
         f"Status: {s.status.upper()}  Score: {s.score}/100",
         f"Files: {s.scanned_files} scanned, {s.skipped_files} skipped",
         "Findings: " + ", ".join(f"{sev}={s.counts.get(sev, 0)}" for sev in SEVERITIES),
+        f"Suppressed: {s.suppressed_findings}  Baseline-filtered: {s.baseline_findings}",
         "",
     ]
     if not report.findings:
@@ -838,6 +1114,8 @@ def _render_markdown(report: AuditReport, *, limit: int) -> str:
         f"- **Score:** {s.score}/100",
         f"- **Files:** {s.scanned_files} scanned, {s.skipped_files} skipped",
         f"- **Findings:** " + ", ".join(f"{sev}={s.counts.get(sev, 0)}" for sev in SEVERITIES),
+        f"- **Suppressed:** {s.suppressed_findings}",
+        f"- **Baseline-filtered:** {s.baseline_findings}",
         "",
         "## Findings",
         "",
@@ -851,6 +1129,7 @@ def _render_markdown(report: AuditReport, *, limit: int) -> str:
             "",
             f"- **Rule:** `{finding.rule_id}`",
             f"- **Location:** `{finding.path}:{finding.line}:{finding.column}`",
+            f"- **Fingerprint:** `{finding.fingerprint}`",
             f"- **Evidence:** `{finding.snippet}`",
             f"- **Fix:** {finding.remediation}",
             "",
@@ -904,6 +1183,7 @@ def _to_sarif(report: AuditReport) -> dict:
                         "category": f.category,
                         "confidence": f.confidence,
                         "remediation": f.remediation,
+                        "fingerprint": f.fingerprint,
                     },
                 }
                 for f in report.findings
@@ -920,11 +1200,96 @@ def _sarif_level(severity: str) -> str:
     return "note"
 
 
+def render_rules(rules: list[AuditRule], fmt: str = "text") -> str:
+    if fmt == "json":
+        return json.dumps([
+            {
+                "id": rule.id,
+                "title": rule.title,
+                "severity": rule.severity,
+                "category": rule.category,
+                "confidence": rule.confidence,
+                "cwe": rule.cwe,
+                "origin": rule.origin,
+                "extensions": list(rule.extensions),
+                "filenames": list(rule.filenames),
+                "scan_comments": rule.scan_comments,
+            }
+            for rule in sorted(rules, key=lambda item: (item.origin, item.id))
+        ], indent=2, ensure_ascii=False)
+    lines = ["AI Code Security Review Rules", ""]
+    for rule in sorted(rules, key=lambda item: (item.origin, item.id)):
+        scope = []
+        if rule.extensions:
+            scope.append("extensions=" + ",".join(rule.extensions))
+        if rule.filenames:
+            scope.append("filenames=" + ",".join(rule.filenames))
+        scope_text = f" ({'; '.join(scope)})" if scope else ""
+        lines.append(f"[{rule.severity}] {rule.id} - {rule.title} [{rule.origin}]{scope_text}")
+    return "\n".join(lines)
+
+
+def render_github_annotations(report: AuditReport, *, limit: int = 200) -> str:
+    lines: list[str] = []
+    for finding in report.findings[:limit]:
+        level = "error" if finding.severity in ("CRITICAL", "HIGH") else "warning" if finding.severity == "MEDIUM" else "notice"
+        title = _gha_escape(f"{finding.severity} {finding.rule_id}")
+        message = _gha_escape(f"{finding.title}: {finding.remediation}")
+        file_name = _gha_escape(finding.path)
+        lines.append(
+            f"::{level} file={file_name},line={finding.line},col={finding.column},title={title}::{message}"
+        )
+    return "\n".join(lines)
+
+
+def _gha_escape(value: str) -> str:
+    return (
+        value.replace("%", "%25")
+        .replace("\r", "%0D")
+        .replace("\n", "%0A")
+        .replace(":", "%3A")
+        .replace(",", "%2C")
+    )
+
+
+def _write_sample_config(path: Path) -> None:
+    if path.exists():
+        raise FileExistsError(f"Config already exists: {path}")
+    path.write_text(
+        """# AI Code Security Review configuration
+
+[settings]
+fail_on = "HIGH"
+include_tests = false
+max_file_size = 524288
+disabled_rules = []
+exclude = [
+  "dist/**",
+  "build/**",
+  "generated/**",
+]
+
+# Example team policy rule. Duplicate this block and adjust it for local rules.
+[[rules]]
+id = "policy-no-dangerous-library"
+title = "Disallowed dependency or library"
+severity = "MEDIUM"
+category = "policy"
+pattern = "\\bexample-dangerous-library\\b"
+remediation = "Replace this library with the approved project alternative."
+filenames = ["requirements*.txt", "package.json", "pyproject.toml"]
+scan_comments = false
+confidence = "medium"
+""",
+        encoding="utf-8",
+    )
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Offline security readiness checks for AI-generated code."
     )
-    parser.add_argument("path", help="Repository, directory, or file to scan.")
+    parser.add_argument("path", nargs="?", default=".", help="Repository, directory, or file to scan. Default: current directory.")
     parser.add_argument(
         "--format",
         choices=("text", "json", "markdown", "sarif"),
@@ -937,8 +1302,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--fail-on",
-        default="HIGH",
-        help="Fail when findings at or above this severity exist, or use 'none'. Default: HIGH.",
+        help="Fail when findings at or above this severity exist, or use 'none'. Default: config or HIGH.",
     )
     parser.add_argument(
         "--include-tests",
@@ -948,8 +1312,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-file-size",
         type=int,
-        default=512 * 1024,
-        help="Skip files larger than this many bytes. Default: 524288.",
+        help="Skip files larger than this many bytes. Default: config or 524288.",
     )
     parser.add_argument(
         "--limit",
@@ -957,23 +1320,55 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=200,
         help="Maximum findings rendered in text or markdown reports. Default: 200.",
     )
+    parser.add_argument("--config", help="Path to .audit-code.toml. Defaults to auto-discovery in the scanned root.")
+    parser.add_argument("--no-config", action="store_true", help="Disable .audit-code.toml auto-discovery.")
+    parser.add_argument("--disable-rule", action="append", default=[], help="Disable a rule by id. Can be repeated.")
+    parser.add_argument("--exclude", action="append", default=[], help="Exclude paths by glob. Can be repeated.")
+    parser.add_argument("--baseline", help="Filter findings already present in a baseline JSON file.")
+    parser.add_argument("--write-baseline", help="Write current findings to a baseline JSON file.")
+    parser.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions annotation commands for findings.")
+    parser.add_argument("--list-rules", action="store_true", help="List active rules and exit. Use --format json for machine output.")
+    parser.add_argument("--init-config", action="store_true", help="Write a starter .audit-code.toml in the scanned root and exit.")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
+        root_path = Path(args.path).expanduser().resolve()
+        project_root = root_path.parent if root_path.is_file() else root_path
+        if args.init_config:
+            _write_sample_config(project_root / CONFIG_FILENAMES[0])
+            return 0
+        config = _load_config(project_root, args.config, no_config=args.no_config)
+        if args.list_rules:
+            rules = [rule for rule in _all_rules(config) if rule.id not in set(args.disable_rule)]
+            print(render_rules(rules, "json" if args.format == "json" else "text"))
+            return 0
+        max_file_size = args.max_file_size if args.max_file_size is not None else config.max_file_size
         report = scan_project(
             args.path,
             include_tests=args.include_tests,
-            max_file_size=args.max_file_size,
+            max_file_size=max_file_size,
+            config_path=args.config,
+            no_config=args.no_config,
+            disabled_rules=args.disable_rule,
+            exclude=args.exclude,
+            baseline=args.baseline,
         )
+        if args.write_baseline:
+            write_baseline(report, args.write_baseline)
         output = render_report(report, args.format, limit=args.limit)
         if args.output:
             Path(args.output).expanduser().write_text(output + "\n", encoding="utf-8")
         else:
             print(output)
-        return 1 if should_fail(report, args.fail_on) else 0
+        if args.github_annotations:
+            annotations = render_github_annotations(report, limit=args.limit)
+            if annotations:
+                print(annotations)
+        fail_on = args.fail_on if args.fail_on is not None else config.fail_on
+        return 1 if should_fail(report, fail_on) else 0
     except Exception as exc:
         print(f"audit_code.py: error: {exc}", file=sys.stderr)
         return 2
