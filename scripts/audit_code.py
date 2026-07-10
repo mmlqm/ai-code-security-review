@@ -55,7 +55,7 @@ SOURCE_EXTENSIONS = {
     ".h", ".hpp", ".rs", ".kt", ".kts", ".swift", ".scala",
     ".sh", ".bash", ".zsh", ".ps1", ".psm1",
     ".yml", ".yaml", ".json", ".toml", ".ini", ".conf", ".cfg",
-    ".xml", ".gradle", ".properties", ".env",
+    ".xml", ".html", ".gradle", ".properties", ".env", ".tf", ".hcl",
 }
 
 SPECIAL_FILENAMES = {
@@ -78,8 +78,20 @@ _SECRET_ASSIGNMENT_RE = re.compile(
 )
 
 CONFIG_FILENAMES = (".audit-code.toml", "audit-code.toml")
+AUDITIGNORE_FILENAME = ".auditignore"
 SUPPRESS_RE = re.compile(r"audit-code:\s*(ignore|ignore-next-line)(?:\s+([^#/\r\n]+))?", re.IGNORECASE)
 RULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{1,96}$")
+ANSI_COLORS = {
+    "CRITICAL": "\033[95m",
+    "HIGH": "\033[91m",
+    "MEDIUM": "\033[93m",
+    "LOW": "\033[94m",
+    "INFO": "\033[90m",
+    "PASS": "\033[92m",
+    "REVIEW": "\033[93m",
+    "FAIL": "\033[91m",
+    "RESET": "\033[0m",
+}
 
 
 Validator = Callable[[re.Match[str], str, Path], bool]
@@ -202,234 +214,9 @@ def _rx(pattern: str, flags: int = re.IGNORECASE) -> Pattern[str]:
 
 def _rules() -> list[AuditRule]:
     """Rule catalog tuned for generated application code and delivery gates."""
-    return [
-        AuditRule(
-            "secret-aws-access-key", "Hardcoded AWS access key", "CRITICAL", "secrets",
-            _rx(r"\b(A3T[A-Z0-9]|AKIA|ASIA)[A-Z0-9]{16}\b", 0),
-            "Move cloud credentials to a secret manager and rotate the exposed key.",
-            cwe="CWE-798", confidence="high", scan_comments=True,
-        ),
-        AuditRule(
-            "secret-private-key", "Private key material committed", "CRITICAL", "secrets",
-            _rx(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)?PRIVATE KEY-----", 0),
-            "Remove private keys from source, rotate them, and load them from protected secret storage.",
-            cwe="CWE-798", confidence="high", scan_comments=True,
-        ),
-        AuditRule(
-            "secret-generic-hardcoded", "Hardcoded secret-like value", "HIGH", "secrets",
-            _rx(r"\b(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|"
-                r"private[_-]?key|access[_-]?key)\b\s*[:=]\s*[\"'](?P<value>[^\"']{8,})[\"']"),
-            "Do not commit runtime secrets. Load them from environment variables or a secret manager.",
-            cwe="CWE-798", confidence="medium", scan_comments=True, validator="secret_value",
-        ),
-        AuditRule(
-            "secret-default-credential", "Default or placeholder credential", "HIGH", "secrets",
-            _rx(r"\b(?:password|passwd|pwd|jwt[_-]?secret|secret[_-]?key|client[_-]?secret)\b\s*[:=]\s*"
-                r"[\"'](?:admin|password|passwd|changeme|change_me|secret|test|demo|123456|dev|local)[\"']"),
-            "Replace generated placeholder credentials with required configuration and startup validation.",
-            cwe="CWE-798", confidence="high", scan_comments=True,
-        ),
-        AuditRule(
-            "auth-placeholder", "Authorization placeholder or bypass", "HIGH", "auth",
-            _rx(r"(?:TODO|FIXME|HACK).{0,80}\b(?:auth|authorization|permission|rbac|access control)\b|"
-                r"\breturn\s+true\s*(?:#|//).{0,80}\b(?:auth|permission|temporary|todo|bypass)\b|"
-                r"\b(?:skipAuth|disableAuth|authRequired)\b\s*[:=]\s*(?:true|false)"),
-            "Replace placeholder authorization with explicit policy checks and negative tests.",
-            cwe="CWE-863", confidence="medium", scan_comments=True, sensitive_boost=True,
-            validator="not_rule_definition",
-        ),
-        AuditRule(
-            "ai-placeholder-in-sensitive-code", "Generated-code placeholder in sensitive path", "MEDIUM", "delivery",
-            _rx(r"\b(?:TODO|FIXME|HACK|not implemented|mock implementation|temporary bypass|"
-                r"for demo only|replace in production|dummy (?:secret|password|token|implementation|data|user)|"
-                r"placeholder (?:secret|password|token|implementation|auth|user))\b"),
-            "Resolve generated placeholders before delivery, especially in auth, payment, admin, or session code.",
-            confidence="medium", scan_comments=True, sensitive_boost=True,
-            validator="placeholder_context",
-        ),
-        AuditRule(
-            "sql-python-dynamic-execute", "Dynamic SQL passed to execute()", "HIGH", "injection",
-            _rx(r"\.execute\s*\(\s*(?:f[\"']|[\"'][^\"']*[\"']\s*(?:%|\+)|[^)]*\.format\s*\()"),
-            "Use parameterized queries or ORM bind parameters instead of formatted SQL strings.",
-            cwe="CWE-89", confidence="medium", extensions=(".py",),
-        ),
-        AuditRule(
-            "sql-js-template-query", "SQL query built with template interpolation", "HIGH", "injection",
-            _rx(r"\b(?:query|execute|raw)\s*\(\s*`[^`]*\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^`]*\$\{"),
-            "Use prepared statements or parameter binding; never interpolate request data into SQL.",
-            cwe="CWE-89", confidence="medium", extensions=(".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"),
-        ),
-        AuditRule(
-            "shell-python-shell-true", "subprocess called with shell=True", "HIGH", "injection",
-            _rx(r"\bsubprocess\.[a-zA-Z_]+\s*\([^)]*shell\s*=\s*True"),
-            "Call subprocess with an argument list and validate each argument.",
-            cwe="CWE-78", confidence="high", extensions=(".py",),
-        ),
-        AuditRule(
-            "shell-python-os-system", "Shell command execution sink", "HIGH", "injection",
-            _rx(r"\b(?:os\.system|os\.popen|commands\.getoutput)\s*\("),
-            "Avoid shell execution for request-controlled data; use safe library APIs.",
-            cwe="CWE-78", confidence="medium", extensions=(".py",),
-        ),
-        AuditRule(
-            "shell-js-child-process", "child_process exec sink", "HIGH", "injection",
-            _rx(r"\b(?:child_process\.)?(?:exec|execSync)\s*\("),
-            "Prefer execFile/spawn with an argument array and strict allowlists.",
-            cwe="CWE-78", confidence="medium", extensions=(".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"),
-        ),
-        AuditRule(
-            "eval-dynamic-code", "Dynamic code evaluation", "HIGH", "injection",
-            _rx(r"\b(?:eval|exec)\s*\(|\bnew\s+Function\s*\(|\bvm\.runIn(?:New)?Context\s*\("),
-            "Remove dynamic code evaluation or constrain it with a purpose-built parser/sandbox.",
-            cwe="CWE-94", confidence="medium",
-            extensions=(".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"),
-        ),
-        AuditRule(
-            "deser-python-unsafe", "Unsafe Python deserialization", "HIGH", "deserialization",
-            _rx(r"\b(?:pickle|marshal|dill)\.loads?\s*\(|\byaml\.load\s*\((?![^)]*SafeLoader)"),
-            "Do not deserialize untrusted data; use JSON or safe loaders with schema validation.",
-            cwe="CWE-502", confidence="high", extensions=(".py",),
-        ),
-        AuditRule(
-            "deser-generic-unsafe", "Unsafe deserialization sink", "HIGH", "deserialization",
-            _rx(r"\b(?:unserialize|ObjectInputStream|BinaryFormatter|JsonConvert\.DeserializeObject)\b"),
-            "Add type allowlists and never deserialize user-controlled payloads into executable object graphs.",
-            cwe="CWE-502", confidence="medium",
-            extensions=(".php", ".java", ".cs", ".js", ".ts"),
-        ),
-        AuditRule(
-            "ssrf-request-url", "Outbound request uses request-controlled URL", "HIGH", "ssrf",
-            _rx(r"\brequests\.(?:get|post|put|delete|request)\s*\([^)]*(?:request\.|args\.get|form\.get)|"
-                r"\b(?:fetch|axios\.(?:get|post|request))\s*\(\s*(?:req\.|request\.|ctx\.request)|"
-                r"\bhttp\.Get\s*\([^)]*r\.URL\.Query\(\)\.Get"),
-            "Validate outbound destinations with scheme and host allowlists; block private network ranges.",
-            cwe="CWE-918", confidence="medium",
-        ),
-        AuditRule(
-            "path-traversal-file-read", "File path built from request input", "HIGH", "path-traversal",
-            _rx(r"\b(?:send_file|open)\s*\([^)]*(?:request\.|args\.get|form\.get)|"
-                r"\bfs\.(?:readFile|createReadStream|writeFile)\s*\([^)]*(?:req\.|request\.|ctx\.request)|"
-                r"\bpath\.join\s*\([^)]*(?:req\.|request\.|ctx\.request)"),
-            "Normalize and allowlist file paths; keep user input out of filesystem joins.",
-            cwe="CWE-22", confidence="medium",
-        ),
-        AuditRule(
-            "tls-verification-disabled", "TLS certificate verification disabled", "HIGH", "crypto",
-            _rx(r"\bverify\s*=\s*False\b|\brejectUnauthorized\s*:\s*false\b|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*[\"']?0"),
-            "Keep TLS verification enabled and fix the trust store instead of disabling validation.",
-            cwe="CWE-295", confidence="high",
-        ),
-        AuditRule(
-            "jwt-verification-disabled", "JWT signature verification disabled", "CRITICAL", "auth",
-            _rx(r"jwt\.decode\s*\([^)]*(?:verify\s*=\s*False|verify_signature[\"']?\s*:\s*False|verify_signature[\"']?\s*:\s*false)"),
-            "Always verify JWT signatures, issuer, audience, expiry, and allowed algorithms.",
-            cwe="CWE-347", confidence="high",
-        ),
-        AuditRule(
-            "weak-hash-for-security", "Weak hash used in security-sensitive code", "MEDIUM", "crypto",
-            _rx(r"\b(?:md5|sha1)\s*\("),
-            "Use SHA-256+ for integrity and a password hashing function such as Argon2id/bcrypt/scrypt for passwords.",
-            cwe="CWE-327", confidence="low", sensitive_boost=True,
-        ),
-        AuditRule(
-            "weak-random-token", "Non-cryptographic randomness for token material", "HIGH", "crypto",
-            _rx(r"(?:Math\.random\(\).*?(?:token|secret|password|otp|nonce)|"
-                r"(?:token|secret|password|otp|nonce).*?Math\.random\(\)|"
-                r"random\.(?:random|randint|choice)\s*\([^)]*\).*?(?:token|secret|password|otp|nonce))"),
-            "Use crypto.randomUUID/crypto.getRandomValues, secrets, or a CSPRNG for token generation.",
-            cwe="CWE-338", confidence="medium",
-        ),
-        AuditRule(
-            "debug-mode-enabled", "Debug mode enabled", "MEDIUM", "config",
-            _rx(r"\bdebug\s*=\s*True\b|\bDEBUG\s*=\s*True\b|app\.run\s*\([^)]*debug\s*=\s*True"),
-            "Disable debug mode in production and gate it behind explicit non-production configuration.",
-            cwe="CWE-489", confidence="high", extensions=(".py",),
-        ),
-        AuditRule(
-            "cors-wide-open", "Permissive CORS configuration", "MEDIUM", "config",
-            _rx(r"Access-Control-Allow-Origin[\"']?\s*[:=]\s*[\"']\*[\"']|"
-                r"\borigin\s*:\s*[\"']\*[\"']|\bapp\.use\s*\(\s*cors\s*\(\s*\)\s*\)"),
-            "Restrict CORS origins to trusted frontends and avoid credentials with wildcard origins.",
-            cwe="CWE-942", confidence="medium",
-        ),
-        AuditRule(
-            "csrf-disabled", "CSRF protection disabled", "MEDIUM", "auth",
-            _rx(r"\bcsrf(?:Protection)?\s*\(\s*\)\.disable\s*\(|\bcsrf_exempt\b|"
-                r"\bWTF_CSRF_ENABLED\s*=\s*False\b|\bCSRF_TRUSTED_ORIGINS\s*=.*\*"),
-            "Enable CSRF protection on browser-authenticated state-changing routes.",
-            cwe="CWE-352", confidence="medium",
-        ),
-        AuditRule(
-            "cookie-insecure", "Cookie security flag disabled", "MEDIUM", "auth",
-            _rx(r"\b(?:secure|httpOnly|sameSite)\s*:\s*false\b|"
-                r"\bSESSION_COOKIE_(?:SECURE|HTTPONLY)\s*=\s*False\b"),
-            "Set Secure, HttpOnly, and an appropriate SameSite mode for session cookies.",
-            cwe="CWE-614", confidence="medium",
-        ),
-        AuditRule(
-            "error-stack-leak", "Stack trace returned or logged directly", "LOW", "observability",
-            _rx(r"\b(?:traceback\.print_exc|err\.stack|error\.stack|exception\.stack)\b"),
-            "Return generic errors to users and send detailed traces only to protected logs.",
-            cwe="CWE-209", confidence="low",
-        ),
-        AuditRule(
-            "secret-logged", "Secret-like value logged", "HIGH", "secrets",
-            _rx(r"\b(?:console\.log|print|logger\.(?:info|debug|error|warn))\s*\([^)]*"
-                r"\b(?:password|passwd|secret|token|apiKey|api_key|authorization)\b"),
-            "Remove secrets from logs and add redaction at logging boundaries.",
-            cwe="CWE-532", confidence="medium", validator="not_rule_definition",
-        ),
-        AuditRule(
-            "docker-root-user", "Container runs as root", "MEDIUM", "deployment",
-            _rx(r"^\s*USER\s+root\s*$", re.IGNORECASE | re.MULTILINE),
-            "Run containers as a non-root user and set filesystem permissions explicitly.",
-            cwe="CWE-250", confidence="high", filenames=("dockerfile*",),
-        ),
-        AuditRule(
-            "docker-latest-image", "Container base image is unpinned or latest", "LOW", "supply-chain",
-            _rx(r"^\s*FROM\s+(?P<image>\S+)", re.IGNORECASE),
-            "Pin base images by immutable digest or a reviewed version tag.",
-            confidence="medium", filenames=("dockerfile*",), validator="docker_from_unpinned",
-        ),
-        AuditRule(
-            "docker-curl-pipe-shell", "Install script piped directly to shell", "HIGH", "supply-chain",
-            _rx(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|powershell|pwsh)\b"),
-            "Download installers separately, verify checksums/signatures, then execute.",
-            cwe="CWE-494", confidence="high",
-        ),
-        AuditRule(
-            "world-writable-permissions", "World-writable permissions", "MEDIUM", "deployment",
-            _rx(r"\bchmod\s+(?:-R\s+)?777\b"),
-            "Use least-privilege file permissions instead of world-writable directories.",
-            cwe="CWE-732", confidence="high",
-        ),
-        AuditRule(
-            "k8s-privileged", "Privileged Kubernetes workload", "HIGH", "deployment",
-            _rx(r"^\s*(?:privileged|allowPrivilegeEscalation|hostNetwork|hostPID)\s*:\s*true\s*$",
-                re.IGNORECASE | re.MULTILINE),
-            "Disable privileged pod options unless there is a reviewed operational exception.",
-            cwe="CWE-250", confidence="high", extensions=(".yml", ".yaml"),
-        ),
-        AuditRule(
-            "k8s-root-user", "Kubernetes workload runs as root", "MEDIUM", "deployment",
-            _rx(r"^\s*runAsUser\s*:\s*0\s*$", re.IGNORECASE | re.MULTILINE),
-            "Set runAsNonRoot and a non-zero runAsUser in pod securityContext.",
-            cwe="CWE-250", confidence="high", extensions=(".yml", ".yaml"),
-        ),
-        AuditRule(
-            "python-unpinned-dependency", "Python dependency is not pinned", "LOW", "supply-chain",
-            _rx(r"^\s*[A-Za-z0-9_.-]+(?:\[[^\]]+\])?\s*(?:[<>=~!]=?\s*[^#\s]+)?\s*(?:#.*)?$"),
-            "Pin dependencies in application builds or compile them into a reviewed lock file.",
-            confidence="medium", filenames=("requirements*.txt",), validator="requirements_unpinned",
-        ),
-        AuditRule(
-            "node-broad-dependency", "Node dependency uses broad version range", "LOW", "supply-chain",
-            _rx(r"[\"'][^\"']+[\"']\s*:\s*[\"'](?:\*|latest|[\^~][^\"']+)[\"']"),
-            "Use lockfiles and reviewed, reproducible dependency versions for deployable artifacts.",
-            confidence="medium", filenames=("package.json",),
-        ),
-    ]
+    from rules_builtin import builtin_rules
 
+    return builtin_rules(AuditRule, _rx)
 
 def _load_config(
     project_root: Path,
@@ -574,6 +361,23 @@ def _load_baseline(path: Path, project_root: Path) -> set[str]:
     return {str(fingerprint) for fingerprint in fingerprints if fingerprint}
 
 
+def _load_auditignore(project_root: Path) -> list[str]:
+    path = project_root / AUDITIGNORE_FILENAME
+    if not path.exists():
+        return []
+    patterns: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            continue
+        if line.endswith("/"):
+            line = line + "**"
+        patterns.append(line)
+    return patterns
+
+
 def write_baseline(report: AuditReport, path: str | os.PathLike[str]) -> None:
     payload = {
         "version": 1,
@@ -599,6 +403,7 @@ def scan_project(
     disabled_rules: Iterable[str] = (),
     exclude: Iterable[str] = (),
     baseline: str | os.PathLike[str] | None = None,
+    changed_paths: Iterable[str] = (),
 ) -> AuditReport:
     """Scan a file or repository and return a structured audit report."""
     root_path = Path(root).expanduser().resolve()
@@ -611,7 +416,7 @@ def scan_project(
     if max_file_size == 512 * 1024 and config.max_file_size:
         max_file_size = config.max_file_size
     disabled = set(config.disabled_rules) | {rule_id for rule_id in disabled_rules}
-    excludes = tuple(config.exclude) + tuple(exclude)
+    excludes = tuple(config.exclude) + tuple(_load_auditignore(project_root)) + tuple(exclude)
     rules = [rule for rule in (_rules() + config.custom_rules) if rule.id not in disabled]
     baseline_path = Path(baseline).expanduser() if baseline else (Path(config.baseline).expanduser() if config.baseline else None)
     baseline_fingerprints = _load_baseline(baseline_path, project_root) if baseline_path else set()
@@ -626,7 +431,9 @@ def scan_project(
     skipped = 0
     suppressed = 0
 
-    for path, was_skipped in _iter_candidate_files(root_path, include_tests, max_file_size, excludes):
+    for path, was_skipped in _iter_candidate_files(
+        root_path, include_tests, max_file_size, excludes, changed_paths
+    ):
         if was_skipped:
             skipped += 1
             continue
@@ -690,7 +497,7 @@ def should_fail(report: AuditReport, fail_on: str = "HIGH") -> bool:
     return any(SEVERITY_RANK[f.severity] >= threshold for f in report.findings)
 
 
-def render_report(report: AuditReport, fmt: str = "text", *, limit: int = 200) -> str:
+def render_report(report: AuditReport, fmt: str = "text", *, limit: int = 200, color: bool = False) -> str:
     fmt = fmt.lower()
     if fmt == "json":
         return json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
@@ -700,7 +507,7 @@ def render_report(report: AuditReport, fmt: str = "text", *, limit: int = 200) -
         return json.dumps(_to_sarif(report), indent=2, ensure_ascii=False)
     if fmt != "text":
         raise ValueError(f"Unsupported report format: {fmt}")
-    return _render_text(report, limit=limit)
+    return _render_text(report, limit=limit, color=color)
 
 
 def _iter_candidate_files(
@@ -708,12 +515,34 @@ def _iter_candidate_files(
     include_tests: bool,
     max_file_size: int,
     exclude: Iterable[str] = (),
+    changed_paths: Iterable[str] = (),
 ) -> Iterable[tuple[Path, bool]]:
+    exclude_patterns = tuple(exclude)
+    changed = [item.strip() for item in changed_paths if item and item.strip()]
+    if changed and root.is_dir():
+        for rel in changed:
+            rel = rel.replace("\\", "/").lstrip("/")
+            path = (root / rel).resolve()
+            try:
+                normalized = path.relative_to(root).as_posix()
+            except ValueError:
+                yield path, True
+                continue
+            if not path.exists() or not path.is_file():
+                yield path, True
+                continue
+            if _matches_any_glob(normalized, exclude_patterns):
+                yield path, True
+                continue
+            if not include_tests and _is_test_path(normalized):
+                continue
+            yield path, not _is_candidate(path, max_file_size)
+        return
+
     if root.is_file():
         yield root, not _is_candidate(root, max_file_size)
         return
 
-    exclude_patterns = tuple(exclude)
     for dirpath, dirnames, filenames in os.walk(root):
         current = Path(dirpath)
         dirnames[:] = [d for d in dirnames if d not in DEFAULT_IGNORED_DIRS]
@@ -960,7 +789,7 @@ def _validate_docker_from_unpinned(match: re.Match[str], line: str, path: Path) 
 
 def _validate_not_rule_definition(match: re.Match[str], line: str, path: Path) -> bool:
     stripped = line.strip()
-    if path.name in {"ai_code_audit.py", "audit_code.py"}:
+    if path.name in {"ai_code_audit.py", "audit_code.py", "rules_builtin.py"}:
         if stripped.startswith(("r\"", "r'", "\"", "'")):
             return False
         if "for term in (" in stripped and any(
@@ -1076,12 +905,21 @@ def _rel(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def _render_text(report: AuditReport, *, limit: int) -> str:
+def _paint(text: str, key: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    color = ANSI_COLORS.get(key, "")
+    reset = ANSI_COLORS["RESET"] if color else ""
+    return f"{color}{text}{reset}"
+
+
+def _render_text(report: AuditReport, *, limit: int, color: bool = False) -> str:
     s = report.summary
+    status = s.status.upper()
     lines = [
         "AI Code Security Review",
         f"Root: {s.root}",
-        f"Status: {s.status.upper()}  Score: {s.score}/100",
+        f"Status: {_paint(status, status, color)}  Score: {s.score}/100",
         f"Files: {s.scanned_files} scanned, {s.skipped_files} skipped",
         "Findings: " + ", ".join(f"{sev}={s.counts.get(sev, 0)}" for sev in SEVERITIES),
         f"Suppressed: {s.suppressed_findings}  Baseline-filtered: {s.baseline_findings}",
@@ -1094,7 +932,7 @@ def _render_text(report: AuditReport, *, limit: int) -> str:
     for finding in report.findings[:limit]:
         loc = f"{finding.path}:{finding.line}:{finding.column}"
         lines.extend([
-            f"[{finding.severity}] {finding.rule_id} - {finding.title}",
+            f"[{_paint(finding.severity, finding.severity, color)}] {finding.rule_id} - {finding.title}",
             f"  at: {loc}",
             f"  evidence: {finding.snippet}",
             f"  fix: {finding.remediation}",
@@ -1285,6 +1123,22 @@ confidence = "medium"
     )
 
 
+def _load_changed_paths(args: argparse.Namespace) -> list[str]:
+    changed = list(args.changed_files or [])
+    if args.changed_files_from:
+        path = Path(args.changed_files_from).expanduser()
+        changed.extend(path.read_text(encoding="utf-8").splitlines())
+    return [item.strip() for item in changed if item and item.strip()]
+
+
+def _use_color(mode: str) -> bool:
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return sys.stdout.isatty()
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Offline security readiness checks for AI-generated code."
@@ -1326,6 +1180,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--exclude", action="append", default=[], help="Exclude paths by glob. Can be repeated.")
     parser.add_argument("--baseline", help="Filter findings already present in a baseline JSON file.")
     parser.add_argument("--write-baseline", help="Write current findings to a baseline JSON file.")
+    parser.add_argument("--changed-files", nargs="*", default=[], help="Scan only these changed paths relative to the root.")
+    parser.add_argument("--changed-files-from", help="Read newline-delimited changed paths from a file.")
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Colorize text output. Default: auto.",
+    )
     parser.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions annotation commands for findings.")
     parser.add_argument("--list-rules", action="store_true", help="List active rules and exit. Use --format json for machine output.")
     parser.add_argument("--init-config", action="store_true", help="Write a starter .audit-code.toml in the scanned root and exit.")
@@ -1346,6 +1208,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render_rules(rules, "json" if args.format == "json" else "text"))
             return 0
         max_file_size = args.max_file_size if args.max_file_size is not None else config.max_file_size
+        changed_paths = _load_changed_paths(args)
         report = scan_project(
             args.path,
             include_tests=args.include_tests,
@@ -1355,10 +1218,11 @@ def main(argv: list[str] | None = None) -> int:
             disabled_rules=args.disable_rule,
             exclude=args.exclude,
             baseline=args.baseline,
+            changed_paths=changed_paths,
         )
         if args.write_baseline:
             write_baseline(report, args.write_baseline)
-        output = render_report(report, args.format, limit=args.limit)
+        output = render_report(report, args.format, limit=args.limit, color=_use_color(args.color))
         if args.output:
             Path(args.output).expanduser().write_text(output + "\n", encoding="utf-8")
         else:

@@ -1,0 +1,7 @@
+# Local build outputs and generated artifacts.
+dist/**
+build/**
+coverage/**
+generated/**
+*.sarif
+*.zip

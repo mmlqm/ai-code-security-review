@@ -24,9 +24,13 @@ The goal is not to replace Semgrep, CodeQL, or a mature SAST program. The goal i
 - CI-friendly exit codes with configurable severity thresholds.
 - GitHub Actions annotations.
 - Custom TOML policy rules for team-specific checks.
+- `.auditignore` support for generated files and large repository hygiene.
+- Incremental scans with explicit changed-file lists.
+- Colorized terminal output for local use.
 - Baseline support for legacy findings so new issues still fail the gate.
 - Inline suppressions for reviewed false positives.
 - Fingerprints for stable tracking across reports.
+- Expanded AI-failure rules for JWT none algorithms, MongoDB injection, mass assignment, SSTI, open redirects, XSS sinks, weak bcrypt cost factors, public S3 ACLs, and risky framework defaults.
 - Codex skill metadata and workflow guidance.
 
 ## Quick Start
@@ -53,6 +57,19 @@ Emit GitHub Actions annotations:
 
 ```bash
 python scripts/audit_code.py . --github-annotations
+```
+
+Scan only changed files:
+
+```bash
+git diff --name-only origin/main...HEAD > changed.txt
+python scripts/audit_code.py . --changed-files-from changed.txt --fail-on HIGH
+```
+
+Force color locally:
+
+```bash
+python scripts/audit_code.py . --color always
 ```
 
 List active rules:
@@ -88,6 +105,15 @@ extensions = [".py", ".js", ".ts"]
 ```
 
 See [references/configuration.md](references/configuration.md) for custom rules, baselines, and suppressions.
+
+Use `.auditignore` for generated or vendored paths:
+
+```gitignore
+dist/**
+build/**
+generated/**
+*.sarif
+```
 
 ## Baselines
 
@@ -150,7 +176,9 @@ ai-code-security-review/
 ├── references/
 │   ├── configuration.md
 │   └── review-policy.md
-└── scripts/audit_code.py
+└── scripts/
+    ├── audit_code.py
+    └── rules_builtin.py
 ```
 
 Use the skill when asking Codex to perform release-readiness review, explain findings, add targeted tests, or wire the scanner into CI.

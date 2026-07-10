@@ -1,6 +1,6 @@
 ---
 name: ai-code-security-review
-description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when Codex is asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, authorization placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookie settings, Docker/Kubernetes risks, dependency hygiene, missing tests, missing CI, custom team policy rules, baselines for existing findings, GitHub Actions annotations, or text, JSON, Markdown, and SARIF security reports. This skill is for code review and delivery gating only; it does not perform network reconnaissance, vulnerability scanning of live targets, exploitation, credential attacks, or bypass generation.
+description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when Codex is asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, authorization placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookie settings, Docker/Kubernetes risks, dependency hygiene, missing tests, missing CI, custom team policy rules, .auditignore exclusions, incremental changed-file scans, baselines for existing findings, GitHub Actions annotations, colorized terminal output, or text, JSON, Markdown, and SARIF security reports. This skill is for code review and delivery gating only; it does not perform network reconnaissance, vulnerability scanning of live targets, exploitation, credential attacks, or bypass generation.
 ---
 
 # AI Code Security Review
@@ -55,13 +55,19 @@ python scripts/audit_code.py /path/to/repo --list-rules
 
 # Add native GitHub Actions annotations
 python scripts/audit_code.py /path/to/repo --github-annotations
+
+# Scan only files changed in a PR/MR
+python scripts/audit_code.py /path/to/repo --changed-files-from changed.txt
+
+# Force color for local terminal review
+python scripts/audit_code.py /path/to/repo --color always
 ```
 
 Formats: `text`, `json`, `markdown`, `sarif`.
 
 Fail thresholds: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `none`.
 
-Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, and default gate settings. Read `references/configuration.md` before creating or editing project config.
+Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, and default gate settings. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
 
 ## Manual Triage
 
@@ -87,6 +93,7 @@ Keep the work defensive and code-focused:
 
 ## Resources
 
-- `scripts/audit_code.py`: Offline deterministic scanner and report renderer.
+- `scripts/audit_code.py`: Offline deterministic scanner, config loader, traversal engine, and report renderer.
+- `scripts/rules_builtin.py`: Built-in rule catalog.
 - `references/review-policy.md`: Triage and reporting guidance for release reviews.
 - `references/configuration.md`: Config, custom rules, baseline, and suppression guidance.

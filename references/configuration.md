@@ -19,6 +19,37 @@ Important settings:
 - `exclude`: glob patterns such as `generated/**`.
 - `baseline`: path to a JSON baseline file.
 
+## Audit Ignore
+
+Use `.auditignore` for generated, vendored, or release-output paths that should never be scanned:
+
+```gitignore
+dist/**
+build/**
+coverage/**
+generated/**
+*.sarif
+```
+
+The syntax is simple glob matching. Blank lines and `#` comments are ignored. Negated patterns are ignored for now.
+
+## Incremental Scans
+
+For PR/MR workflows, pass changed files explicitly:
+
+```bash
+git diff --name-only origin/main...HEAD > changed.txt
+python scripts/audit_code.py . --changed-files-from changed.txt --fail-on HIGH
+```
+
+Or pass paths directly:
+
+```bash
+python scripts/audit_code.py . --changed-files app/auth.py web/server.ts
+```
+
+Project-level delivery checks still run. Use a baseline when existing project-level debt should not fail new changes.
+
 ## Custom Rules
 
 Add `[[rules]]` blocks for team policy checks:
