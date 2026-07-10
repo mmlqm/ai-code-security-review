@@ -9,13 +9,13 @@ Examples of encouraged behavior:
 - Give reproducible examples.
 - Explain false positives with source context.
 - Keep discussions focused on safer delivery.
-- Respect the project boundary against offensive workflows.
+- Respect the project boundary against non-defensive workflows.
 
 Examples of unacceptable behavior:
 
 - Harassment or personal attacks.
 - Posting real secrets, private code, or sensitive logs.
-- Requests for unauthorized runtime target testing or credential misuse.
+- Requests for unauthorized live-service testing or credential misuse.
 - Deliberately derailing issue or review threads.
 
 ## Enforcement

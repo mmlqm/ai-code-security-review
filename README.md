@@ -1,8 +1,8 @@
 # AI Code Security Review
 
-Offline, stdlib-only security review for AI-generated or rapidly shipped code, with Claude/Codex-ready AI-assisted deep audit workflows.
+White-box AI code security review for Claude and Codex: an offline scanner, evidence-based review packs, and deterministic report merging for release-ready code.
 
-This repository packages a Codex skill, Claude/Codex agent metadata, a deterministic local scanner, and an AI review-pack generator. It is designed for the moment before code lands: catch hardcoded secrets, authorization placeholders, unsafe defaults, injection sinks, weak crypto, risky deployment settings, dependency hygiene gaps, and missing delivery safeguards without installing external scanners or calling network services. Then hand a compact, redacted review pack to Claude or Codex for deeper reasoning across files.
+This repository packages a Codex skill, Claude/Codex agent metadata, and three local tools: `audit_code.py` for deterministic scanning, `ai_review_pack.py` for source-evidence review packs, and `ai_report.py` for merging scanner and AI JSON findings into release reports. It is designed for the moment before code lands: catch hardcoded secrets, authorization placeholders, unsafe defaults, injection sinks, weak crypto, risky deployment settings, dependency hygiene gaps, and missing delivery safeguards without installing external scanners or calling network services. Then hand a compact, redacted review pack to Claude or Codex so AI assistance stays grounded in source code, configuration, CI, manifests, and dependency evidence.
 
 ## Why It Exists
 
@@ -17,19 +17,30 @@ AI-generated code often looks complete before it is safe to ship. This tool focu
 
 The goal is not to replace Semgrep, CodeQL, or a mature SAST program. The goal is a fast, boring, offline gate that catches high-signal mistakes before release.
 
-### Two-Layer Defense
+### White-Box Review Workflow
 
 ```
-Layer 1 — Fast Gate (audit_code.py)         Layer 2 — Deep Analysis (LLM)
-─────────────────────────────────────       ─────────────────────────────
-Deterministic regex patterns                AI reasoning across files
-<100ms, zero dependencies                   7 review dimensions
-Every commit                                PR review / pre-release
-Catches: secrets, obvious sinks, config     Catches: logic flaws, data flow,
-                                              business logic, trust boundaries
+1. Fast Gate          audit_code.py
+   Deterministic stdlib scanner for every commit and CI gate.
+
+2. AI Review Pack     ai_review_pack.py
+   Claude/Codex-ready source brief with scanner output, hotspots,
+   changed files, token estimates, and review instructions.
+
+3. Report Merge       ai_report.py
+   Normalize scanner + AI findings into Markdown, JSON, PR comments,
+   and release-ready evidence.
 ```
 
-Read `references/deep-analysis.md` for the full LLM-driven deep review methodology.
+Read `references/deep-analysis.md` for the full AI-assisted source review methodology.
+
+### What Makes It Different
+
+- **Local-first and deterministic** - the scanner uses only the Python standard library and does not call external services.
+- **Claude/Codex-ready** - review packs include platform-specific prompts, token estimates, redacted findings, and changed-file context.
+- **Configurable for real teams** - `.audit-code.toml`, `.auditignore`, baselines, suppressions, and custom rules make it practical for older repositories.
+- **Mergeable AI output** - Claude/Codex findings use a JSON schema that can be merged into stable reports and PR comments.
+- **White-box boundary** - reviews stay on source code, configuration, CI, manifests, dependencies, and user-provided evidence.
 
 ### Claude/Codex AI-Assisted Review
 
@@ -57,12 +68,12 @@ The pack includes scanner output, redacted findings, security-sensitive file hot
 ## Features
 
 - **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
-- **LLM deep analysis** — Seven-dimension security review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
+- **AI-assisted source review** — Seven-dimension review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
 - **AI review pack generator** — `scripts/ai_review_pack.py` creates Claude/Codex-ready Markdown from local scanner results.
 - **AI report merger** — `scripts/ai_report.py` merges scanner JSON and Claude/Codex JSON findings into final Markdown, normalized JSON, and PR-comment summaries.
 - **Lightweight variable tracking** — Same-file Python tracking catches dynamic SQL or shell command strings that are assigned before reaching sinks.
 - **Unknown token detection** — High-entropy strings and unquoted YAML/TOML/properties secrets are flagged for review.
-- **Attack-chain synthesis** — Deep analysis includes a Dimension 0 merge pass that links related lower-severity findings into higher-impact paths when evidence supports it.
+- **Risk-chain synthesis** — Deep analysis includes a Dimension 0 merge pass that links related lower-severity findings into higher-impact paths when evidence supports it.
 - **Context-aware AI packs** — Review packs include rough token estimates and adaptive dimension guidance so Claude/Codex spend attention where the repository has signals.
 - Text, JSON, Markdown, and SARIF reports.
 - CI-friendly exit codes with configurable severity thresholds.
@@ -271,7 +282,7 @@ ai-code-security-review/
 │   └── openai.yaml                  # Codex / OpenAI agent configuration
 ├── references/
 │   ├── configuration.md             # TOML config, custom rules, baselines
-│   ├── deep-analysis.md             # LLM deep review methodology (7 dimensions)
+│   ├── deep-analysis.md             # AI-assisted source review methodology (7 dimensions)
 │   ├── ai-output-schema.md          # Claude/Codex JSON schema for report merging
 │   └── review-policy.md             # Severity guidance + triage rules
 ├── scripts/
@@ -293,7 +304,7 @@ Use the skill when asking Codex to perform release-readiness review, explain fin
 
 This project is defensive and code-focused.
 
-It does not perform black-box or runtime target testing. When a workflow requires runtime security testing, use appropriate authorized testing tools outside this skill.
+It only reviews provided source code, configuration, CI files, lockfiles, manifests, and user-provided reports. It does not exercise live services, perform network probing, or generate request traffic.
 
 ## Development
 

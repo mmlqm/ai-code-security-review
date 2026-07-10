@@ -1,29 +1,28 @@
 ---
 name: ai-code-security-review
-description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, auth placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookies, Docker/Kubernetes risks, dependency hygiene, missing tests/CI, custom policy rules, .auditignore exclusions, incremental scans, baselines, GitHub Actions annotations, or text/JSON/Markdown/SARIF reports. Adapts to Claude and Codex with AI-assisted review packs, agent metadata, easy TOML configuration, and deep seven-dimension LLM analysis. Defensive white-box code review only; no runtime target testing.
+description: White-box AI-assisted security review for AI-generated or rapidly produced application code before release. Use when asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, auth placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookies, Docker/Kubernetes risks, dependency hygiene, missing tests/CI, custom TOML policy rules, .auditignore exclusions, incremental scans, baselines, GitHub Actions annotations, or text/JSON/Markdown/SARIF reports. Provides Claude/Codex review packs, agent metadata, report merging, and a seven-dimension source-evidence workflow. Defensive source/config/CI review only; no live-service testing.
 ---
 
 # AI Code Security Review
 
 ## Overview
 
-Review application code before release using a two-layer defense that works well in both Claude and Codex:
+Review application code before release with a three-stage white-box workflow that works well in both Claude and Codex:
 
-1. **Fast Gate** - `audit_code.py`: deterministic, zero-dependency regex scanner. Catches hardcoded secrets, obvious injection sinks, weak crypto, and misconfigurations in <100ms. Runs on every commit.
+1. **Fast Gate** - `audit_code.py`: deterministic, zero-dependency scanner. Catches hardcoded secrets, obvious injection sinks, weak crypto, and misconfigurations quickly enough for every commit.
 
-2. **Deep Analysis** - LLM-driven review across seven dimensions. Finds what regex cannot: logic flaws, data flow vulnerabilities, business logic bugs, architectural trust boundary violations. Triggered on PR review or pre-release audit.
+2. **AI Review Pack** - `ai_review_pack.py`: builds a Claude/Codex-ready source brief with scanner output, changed files, hotspots, redacted evidence, token estimates, and review prompts.
+
+3. **Report Merge** - `ai_report.py`: merges scanner JSON and Claude/Codex JSON findings into stable Markdown, JSON, and PR-comment output.
 
 ```
-pre-commit -> audit_code.py (fast gate) -> PASS -> commit
-                    |                         |
-                    v                         v
-              findings.json              PR / Release
-                    |
-                    v
-              LLM Deep Analysis (7 dimensions)
-                    |
-                    v
-              Unified Report
+pre-commit / CI -> audit_code.py -> scanner.json
+                                      |
+                                      v
+PR / release review -> ai_review_pack.py -> Claude / Codex JSON
+                                      |
+                                      v
+                               ai_report.py -> unified report
 ```
 
 ## Quick Start
@@ -66,7 +65,7 @@ python scripts/audit_code.py /path/to/repo --format json --fail-on none --output
 python scripts/ai_report.py /path/to/repo --scanner-report scanner.json --ai-findings ai-findings.json --output ai-code-security-report.md --pr-comment-output ai-code-security-pr-comment.md
 ```
 
-### Deep Analysis (PR review / pre-release)
+### AI-Assisted Source Review (PR review / pre-release)
 
 When the user requests a deep review, follow the workflow in `references/deep-analysis.md`:
 
@@ -84,7 +83,7 @@ When the user requests a deep review, follow the workflow in `references/deep-an
    | Architecture & Trust | Trust boundary violations, missing defense layers, implicit security assumptions |
 
 3. **Merge and prioritize** - deduplicate across dimensions, cross-reference scanner findings
-4. **Chain synthesize** - combine related findings only when concrete evidence shows a higher-impact path
+4. **Risk-chain synthesize** - combine related findings only when concrete evidence shows a higher-impact path
 5. **Evidence verify** - for each HIGH/CRITICAL, try to disprove it using source evidence
 6. **Report** - release blockers first, then review-required, then hardening
 
@@ -100,7 +99,7 @@ python scripts/audit_code.py /path/to/repo --format markdown --output ai-code-se
 # SARIF for code scanning platforms
 python scripts/audit_code.py /path/to/repo --format sarif --output ai-code-security.sarif
 
-# JSON for feeding into LLM deep analysis
+# JSON for feeding into AI-assisted source review
 python scripts/audit_code.py /path/to/repo --format json --fail-on none
 
 # Report without failing CI
@@ -217,15 +216,15 @@ Read `references/review-policy.md` when you need severity guidance, report shape
 - High-entropy unknown-token detection catches custom credentials that do not match cloud-provider formats.
 - YAML/TOML/properties unquoted secret detection catches common config leaks such as Helm values.
 - AI review packs include adaptive review scope and rough token estimates before Claude/Codex deep analysis.
-- Dimension 0 chain synthesis in `references/deep-analysis.md` links related findings into a higher-impact path only when evidence supports escalation.
+- Dimension 0 risk-chain synthesis in `references/deep-analysis.md` links related findings into a higher-impact path only when evidence supports escalation.
 
 ## Boundaries
 
 Keep the work defensive and code-focused:
 
-- Do not run runtime target testing or network probing from this skill.
-- Do not add network scanners or offensive test harnesses to this skill.
-- When a user asks for black-box testing, pivot to reviewing source code, configuration, CI artifacts, or a user-provided report.
+- Do not exercise live services or run network probing from this skill.
+- Do not add network scanners, generated request traffic, or non-defensive harnesses to this skill.
+- When a user asks for testing against a running service, pivot to reviewing source code, configuration, CI artifacts, or a user-provided report.
 - When a vulnerability is found in code, provide a concise explanation and concrete defensive patch guidance.
 
 ## Resources
@@ -240,7 +239,7 @@ Keep the work defensive and code-focused:
 | `.github/workflows/ai-security-review.yml` | Optional artifact workflow for SARIF, review packs, and reports |
 | `.audit-code.example.toml` | Ready-to-edit scanner and policy configuration template |
 | `.pre-commit-hooks.yaml` | Pre-commit hook metadata |
-| `references/deep-analysis.md` | Full LLM deep analysis methodology with 7 dimension prompts |
+| `references/deep-analysis.md` | Full AI-assisted source review methodology with 7 dimension prompts |
 | `references/review-policy.md` | Triage and reporting guidance |
 | `references/configuration.md` | Config, custom rules, baseline, and suppression guidance |
 | `agents/claude.yaml` | Claude-specific agent configuration |

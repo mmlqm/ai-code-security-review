@@ -56,4 +56,4 @@ Do not add suppressions or baselines to hide unknown issues. A suppression shoul
 
 ## Security Boundary
 
-Keep this project offline and defensive. Do not add black-box or runtime target testing features.
+Keep this project offline and defensive. Do not add live-service testing or network activity features.

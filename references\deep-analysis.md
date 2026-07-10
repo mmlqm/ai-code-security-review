@@ -1,7 +1,7 @@
-# Deep Analysis — LLM-Driven Security Review
+# Deep Analysis - AI-Assisted Source Review
 
-This reference defines how an LLM (Claude, Codex, or any capable model) performs
-a **second-pass deep review** after the deterministic scanner (`audit_code.py`)
+This reference defines how Claude, Codex, or another capable model performs
+a **second-pass source review** after the deterministic scanner (`audit_code.py`)
 has completed its first pass.
 
 ## Architecture
@@ -12,7 +12,7 @@ audit_code.py (regex fast-gate)
         ├── findings.json (structured, deduped, redacted)
         │
         ▼
-LLM Deep Analysis (this document)
+AI Source Review (this document)
         │
         ├── Dimension 1: Auth & Access Control
         ├── Dimension 2: Data Flow & Injection
@@ -23,12 +23,12 @@ LLM Deep Analysis (this document)
         └── Dimension 7: Codebase-Specific Risks
         │
         ▼
-Unified Report (scanner findings + LLM findings, deduped, prioritized)
+Unified Report (scanner findings + AI findings, deduped, prioritized)
 ```
 
-## Why LLM for the Second Pass
+## Why AI Assistance for the Second Pass
 
-The regex scanner catches **patterns**. The LLM catches **logic**:
+The regex scanner catches **patterns**. Claude/Codex can help review **logic**:
 
 | Scanner can't do | LLM can do |
 |---|---|
@@ -121,9 +121,9 @@ Return a JSON object with a "findings" array. Each finding:
 
 [CONSTRAINTS]
 - Do NOT flag issues the scanner already found unless you have NEW context
-  that changes the severity or adds an attack chain
+  that changes the severity or adds a risk chain
 - Do NOT flag missing security headers (HSTS, CSP, X-Frame-Options) as HIGH
-  unless they directly enable a concrete attack
+  unless they directly enable a concrete abuse path
 - If an auth check looks correct and complete, say so — don't invent issues
 - If you're uncertain, set confidence to "low" and explain what additional
   context would resolve the uncertainty
@@ -306,7 +306,7 @@ Find:
 - Sensitive data in logs: passwords, tokens, PII, session IDs, full request bodies
 - Different error responses that enable user enumeration (login, registration,
   password reset)
-- Timing differences in error paths that enable side-channel attacks
+- Timing differences in error paths that enable side-channel leakage
 - Exception handlers that catch and silently swallow security-relevant errors
 - Health check or status endpoints exposing internal infrastructure details
 - API error responses revealing internal object schemas or validation rules
@@ -343,7 +343,7 @@ Return a JSON object with a "findings" array:
 ```
 [ROLE]
 You are a security engineer specializing in business logic vulnerabilities and
-concurrency/race-condition attacks. You find flaws where the code is
+concurrency/race-condition flaws. You find flaws where the code is
 syntactically correct but logically broken in ways that violate security
 invariants.
 
@@ -541,7 +541,7 @@ look moderate in isolation but combine into a release blocker.
 [ROLE]
 You are the final review lead. You do not search for new files first. You read
 all scanner findings, all LLM dimension findings, and the trust boundary map
-together, then identify attack chains supported by evidence already found.
+together, then identify risk chains supported by evidence already found.
 
 [FOCUS]
 Look for chains where two or more LOW/MEDIUM/HIGH findings combine into a
@@ -579,7 +579,7 @@ Return a JSON object with a "chains" array. Each chain:
 
 [CONSTRAINTS]
 - Do not invent missing prerequisites.
-- Do not provide black-box testing steps, runtime target checks, or generated request data.
+- Do not provide live-service test steps, network activity, or generated request data.
 - Prefer one strong chain over many weak combinations.
 ```
 
@@ -621,12 +621,12 @@ After all seven dimensions and Dimension 0 complete, merge findings with this al
 ## Report Template
 
 ```markdown
-# AI Code Security Review — Deep Analysis Report
+# AI Code Security Review - Deep Analysis Report
 
 ## Scan Summary
 - **Target:** {PROJECT_ROOT}
 - **Scanner findings:** {COUNT} (CRITICAL={N}, HIGH={N}, MEDIUM={N}, LOW={N}, INFO={N})
-- **LLM findings:** {COUNT} (CRITICAL={N}, HIGH={N}, MEDIUM={N}, LOW={N}, INFO={N})
+- **AI findings:** {COUNT} (CRITICAL={N}, HIGH={N}, MEDIUM={N}, LOW={N}, INFO={N})
 - **False positives cleared:** {COUNT}
 - **Severity escalations:** {COUNT}
 

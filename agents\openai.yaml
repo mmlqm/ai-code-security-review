@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Code Security Review"
+  short_description: "White-box AI code security review"
+  default_prompt: "Use $ai-code-security-review to run the offline scanner, build a Claude/Codex-ready source review pack when useful, and return mergeable JSON findings for ai_report.py before the final release summary."

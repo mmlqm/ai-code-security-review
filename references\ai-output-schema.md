@@ -48,5 +48,5 @@ python scripts/ai_report.py . --scanner-report scanner.json --ai-findings ai-fin
 Keep real credentials out of AI output. If a real credential is found, describe
 the type and location only, then require rotation.
 
-This schema is for white-box source review. Do not include black-box testing
-steps, runtime target checks, or generated request data.
+This schema is for white-box source review. Do not include live-service test
+steps, network activity, or generated request data.
