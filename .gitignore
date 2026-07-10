@@ -9,3 +9,6 @@ build/
 *.sarif
 ai-code-security*.zip
 ai-code-review-pack*.md
+ai-code-security-report*.md
+ai-code-security-pr-comment*.md
+scanner.json

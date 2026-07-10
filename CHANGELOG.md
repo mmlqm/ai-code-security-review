@@ -15,8 +15,15 @@ This project uses Conventional Commits for commit messages.
 - Same-file Python variable tracking for dynamic SQL and shell command strings.
 - High-entropy unknown-token detection and unquoted YAML/TOML/properties secret detection.
 - AI review-pack context budget estimates and adaptive dimension guidance.
+- AI findings merge/report workflow in `scripts/ai_report.py` with Markdown, JSON, and PR-comment outputs.
+- Claude/Codex JSON output schema in `references/ai-output-schema.md`.
+- Optional `.github/workflows/ai-security-review.yml` artifact workflow for scanner JSON, SARIF, review pack, and report output.
 - Dimension 0 attack-chain synthesis guidance for deep LLM review.
 - Pre-commit hook metadata in `.pre-commit-hooks.yaml`.
+
+### Changed
+
+- Tightened documentation and agent prompts around white-box source review; removed black-box/runtime target testing guidance.
 - Built-in rules split into `scripts/rules_builtin.py`.
 - `.auditignore` support.
 - Incremental changed-file scanning with `--changed-files` and `--changed-files-from`.

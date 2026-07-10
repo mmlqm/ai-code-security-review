@@ -111,9 +111,9 @@ Return a JSON object with a "findings" array. Each finding:
   "severity": "CRITICAL|HIGH|MEDIUM|LOW|INFO",
   "confidence": "high|medium|low",
   "location": "path/to/file:line",
-  "description": "What the bug is and how it can be exploited",
-  "prerequisites": "What an attacker needs to exploit this",
-  "impact": "What the attacker gains",
+  "description": "What the bug is and why the reviewed code makes it security-relevant",
+  "prerequisites": "What source-visible preconditions make the risk reachable",
+  "impact": "What security property is affected",
   "remediation": "Specific code change to fix it",
   "test_recommendation": "What test would catch a regression of this fix",
   "cwe": "CWE-xxx if applicable"
@@ -134,7 +134,7 @@ Return a JSON object with a "findings" array. Each finding:
 ```
 [ROLE]
 You are a senior application security engineer specializing in injection
-vulnerabilities and taint tracking. You trace how attacker-controlled data
+vulnerabilities and taint tracking. You trace how untrusted data
 moves through an application and where it reaches dangerous sinks.
 
 [CONTEXT]
@@ -145,7 +145,7 @@ The scanner already found these injection-related surface issues:
 {SCANNER_INJECTION_FINDINGS}
 
 [FOCUS]
-Find vulnerabilities where attacker-controlled data reaches a dangerous sink
+Find vulnerabilities where untrusted data reaches a dangerous sink
 without adequate sanitization or parameterization. Go beyond the obvious
 (string concatenation into SQL) and look for:
 
@@ -170,7 +170,7 @@ without adequate sanitization or parameterization. Go beyond the obvious
 [METHODOLOGY]
 1. Identify all external input sources:
    - HTTP: query params, body (JSON/form/multipart), headers, cookies, path
-   - Data stores: database rows, cache entries, message queue payloads
+   - Data stores: database rows, cache entries, message queue messages
    - Files: uploads, config files, imported data
    - External: API responses, webhooks, RSS feeds
 2. For each source, find the variable name it's assigned to
@@ -184,8 +184,8 @@ without adequate sanitization or parameterization. Go beyond the obvious
 4. For each sink reached, classify:
    - Is there sanitization between source and sink?
    - Is the sanitization context-appropriate? (HTML-encoding for SQL is not enough)
-   - Is there a framework feature that would prevent exploitation?
-   - Could the sanitization itself be bypassed?
+   - Is there a framework feature that neutralizes the risk?
+   - Could the sanitization be context-mismatched or incomplete?
 
 [OUTPUT_SCHEMA]
 Return a JSON object with a "findings" array. Each finding:
@@ -293,7 +293,7 @@ Return a JSON object with a "findings" array. Each finding:
 [ROLE]
 You are a security engineer specializing in information disclosure through
 error handling, logging, and debug behaviors. You find the information
-attackers can extract from application responses.
+untrusted callers can infer from application responses.
 
 [CONTEXT]
 You are reviewing the codebase at {PROJECT_ROOT}.
@@ -332,7 +332,7 @@ Return a JSON object with a "findings" array:
   "location": "file:line",
   "leak_type": "stack-trace|debug-endpoint|log-secrets|user-enumeration|timing|internal-config",
   "what_is_leaked": "specific data exposed",
-  "attacker_value": "how an attacker would use this information",
+  "risk_value": "why this information is security-relevant",
   "remediation": "specific code change",
   "cwe": "CWE-xxx"
 }
@@ -362,9 +362,9 @@ Find:
   - Negative quantities, prices, or amounts accepted
   - Workflow steps skippable by calling endpoints out of order
   - Discount/coupon logic that can be combined in unintended ways
-  - Rounding errors exploitable across many transactions
+  - Rounding errors that can accumulate across many transactions
   - Idempotency keys not validated, allowing replay of payments/actions
-  - Rate limits enforced client-side or easily bypassed via header manipulation
+  - Rate limits enforced client-side or inconsistently enforced server-side
 - Authorization logic flaws:
   - User ID/role/tenant taken from request body instead of session
   - Admin checks that only verify `is_admin` boolean without checking ownership
@@ -390,7 +390,7 @@ Return a JSON object with a "findings" array:
   "confidence": "high|medium|low",
   "location": "file:line",
   "flaw_type": "race-condition|logic-bypass|input-validation|workflow-skip|replay|auth-confusion",
-  "attack_scenario": "step-by-step how an attacker would exploit this",
+  "risk_path": "source-evidence path showing how the logic can fail",
   "current_guard": "what protection exists and why it fails",
   "remediation": "specific code change or architectural fix",
   "cwe": "CWE-xxx"
@@ -448,7 +448,7 @@ Return a JSON object with a "findings" array:
   "location": "file:line",
   "risk_type": "docker|kubernetes|cicd|dependency|artifact",
   "description": "what is misconfigured",
-  "attack_scenario": "how this would be exploited in practice",
+  "risk_path": "source-evidence path showing the deployment risk",
   "remediation": "specific configuration change",
   "cwe": "CWE-xxx"
 }
@@ -493,9 +493,9 @@ This dimension is deliberately open-ended. Look for:
 1. Read the project's README, API docs, and architectural decision records
 2. Trace the critical path for the most security-sensitive operation:
    - Authentication → Authorization → Business logic → Data access
-3. Ask: what would break if each component received malicious input?
+3. Ask: what would break if each component received malformed or untrusted input?
 4. Ask: what security property does each component RELY ON from its callers?
-5. Ask: what would an attacker learn by reading the code?
+5. Ask: what sensitive assumptions are visible in the code?
 
 [OUTPUT_SCHEMA]
 Return a JSON object with:
@@ -571,7 +571,7 @@ Return a JSON object with a "chains" array. Each chain:
   "confidence": "high|medium|low",
   "linked_findings": ["finding-id-or-location", "finding-id-or-location"],
   "chain_path": ["step 1", "step 2", "step 3"],
-  "impact": "what the attacker gains if the chain holds",
+  "impact": "what security property is affected if the chain holds",
   "why_severity_changed": "why the combined risk is worse than each finding alone",
   "remediation": "fix the root control break, not only one symptom",
   "regression_tests": ["test that would break the chain"]
@@ -579,7 +579,7 @@ Return a JSON object with a "chains" array. Each chain:
 
 [CONSTRAINTS]
 - Do not invent missing prerequisites.
-- Do not provide exploit payloads or live-target instructions.
+- Do not provide black-box testing steps, runtime target checks, or generated request data.
 - Prefer one strong chain over many weak combinations.
 ```
 
@@ -591,11 +591,11 @@ After all seven dimensions and Dimension 0 complete, merge findings with this al
 
 ```
 1. For each finding, compute a priority score:
-   priority = severity_weight × confidence_weight × exploitability
+   priority = severity_weight × confidence_weight × reachability
 
    severity_weight: CRITICAL=25, HIGH=15, MEDIUM=7, LOW=2, INFO=0
    confidence_weight: high=1.0, medium=0.7, low=0.4
-   exploitability: remote-no-auth=1.0, remote-auth=0.8, local=0.5, physical=0.3
+   reachability: external-entry=1.0, authenticated-entry=0.8, local-code-path=0.5, configuration-only=0.3
 
 2. Deduplicate across dimensions:
    - Two findings about the same code location with the same root cause
@@ -635,7 +635,7 @@ After all seven dimensions and Dimension 0 complete, merge findings with this al
 - **Location:** `{file}:{line}`
 - **Source:** scanner / llm-{dimension}
 - **Description:** {what the bug is}
-- **Attack scenario:** {how to exploit}
+- **Risk path:** {source-evidence path}
 - **Remediation:** {specific fix}
 - **Test to add:** {regression test recommendation}
 

@@ -59,6 +59,7 @@ The pack includes scanner output, redacted findings, security-sensitive file hot
 - **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
 - **LLM deep analysis** — Seven-dimension security review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
 - **AI review pack generator** — `scripts/ai_review_pack.py` creates Claude/Codex-ready Markdown from local scanner results.
+- **AI report merger** — `scripts/ai_report.py` merges scanner JSON and Claude/Codex JSON findings into final Markdown, normalized JSON, and PR-comment summaries.
 - **Lightweight variable tracking** — Same-file Python tracking catches dynamic SQL or shell command strings that are assigned before reaching sinks.
 - **Unknown token detection** — High-entropy strings and unquoted YAML/TOML/properties secrets are flagged for review.
 - **Attack-chain synthesis** — Deep analysis includes a Dimension 0 merge pass that links related lower-severity findings into higher-impact paths when evidence supports it.
@@ -129,6 +130,14 @@ Build an AI-assisted review pack:
 
 ```bash
 python scripts/ai_review_pack.py . --agent codex --depth deep
+```
+
+Merge scanner output with Claude/Codex JSON findings:
+
+```bash
+python scripts/audit_code.py . --format json --fail-on none --output scanner.json
+python scripts/ai_report.py . --scanner-report scanner.json --ai-findings ai-findings.json \
+  --output ai-code-security-report.md --pr-comment-output ai-code-security-pr-comment.md
 ```
 
 Use as a pre-commit hook:
@@ -250,6 +259,8 @@ jobs:
       - run: python scripts/audit_code.py . --format text --fail-on HIGH --github-annotations
 ```
 
+For a fuller review workflow, see `.github/workflows/ai-security-review.yml`. It creates scanner JSON, SARIF, a Claude/Codex review pack, a scanner-only final report, and uploadable artifacts. After Claude/Codex produces JSON matching `references/ai-output-schema.md`, run `scripts/ai_report.py` again with `--ai-findings`.
+
 ## Codex Skill Layout
 
 ```text
@@ -261,12 +272,16 @@ ai-code-security-review/
 ├── references/
 │   ├── configuration.md             # TOML config, custom rules, baselines
 │   ├── deep-analysis.md             # LLM deep review methodology (7 dimensions)
+│   ├── ai-output-schema.md          # Claude/Codex JSON schema for report merging
 │   └── review-policy.md             # Severity guidance + triage rules
 ├── scripts/
 │   ├── ai_review_pack.py            # Claude/Codex AI-assisted review pack generator
+│   ├── ai_report.py                 # Merge scanner + AI findings into final reports
 │   ├── audit_code.py                # Deterministic fast-gate scanner engine
 │   └── rules_builtin.py             # 52 built-in detection rule catalog
 └── tests/
+    ├── test_ai_report.py            # AI report merge tests
+    ├── test_ai_review_pack.py       # AI review pack tests
     ├── test_audit_code.py           # Scanner feature tests
     ├── test_engine_features.py      # Engine feature tests
     └── test_rules.py                # Rule coverage tests
@@ -278,7 +293,7 @@ Use the skill when asking Codex to perform release-readiness review, explain fin
 
 This project is defensive and code-focused.
 
-It does not perform live target scanning, reconnaissance, exploitation, password attacks, bypass generation, or network probing. When a workflow requires runtime security testing, use appropriate authorized testing tools outside this skill.
+It does not perform black-box or runtime target testing. When a workflow requires runtime security testing, use appropriate authorized testing tools outside this skill.
 
 ## Development
 

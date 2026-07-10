@@ -22,7 +22,7 @@ Out of scope:
 
 ## Reporting
 
-Do not open a public issue with real secrets, private code, or exploit details.
+Do not open a public issue with real secrets, private code, or sensitive reproduction details.
 
 If a finding involves sensitive material, report only:
 

@@ -1,0 +1,50 @@
+name: ai-security-review
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  ai-security-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run scanner JSON
+        run: python scripts/audit_code.py . --format json --fail-on none --output scanner.json
+
+      - name: Run scanner SARIF
+        run: python scripts/audit_code.py . --format sarif --fail-on none --output ai-code-security.sarif
+
+      - name: Build Claude/Codex review pack
+        run: python scripts/ai_review_pack.py . --agent codex --depth deep --output ai-code-review-pack.md
+
+      - name: Build scanner-only final report
+        run: |
+          python scripts/ai_report.py . \
+            --scanner-report scanner.json \
+            --output ai-code-security-report.md \
+            --pr-comment-output ai-code-security-pr-comment.md
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ai-code-security.sarif
+
+      - name: Upload review artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-code-security-review
+          path: |
+            scanner.json
+            ai-code-security.sarif
+            ai-code-review-pack.md
+            ai-code-security-report.md
+            ai-code-security-pr-comment.md

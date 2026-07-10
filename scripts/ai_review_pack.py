@@ -277,7 +277,7 @@ def build_pack(
             "- Use `.audit-code.toml` for team rules, disabled rules, baseline paths, and excludes.",
             "- Use `.auditignore` for generated, vendored, or release-output paths.",
             "- Use `--changed-files-from changed.txt` for PR/MR review packs.",
-            "- Keep AI review defensive and code-focused; do not run live target probes from this pack.",
+            "- Keep AI review white-box and code-focused; do not run runtime target checks from this pack.",
             "",
         ]
     )

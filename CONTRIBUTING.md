@@ -56,4 +56,4 @@ Do not add suppressions or baselines to hide unknown issues. A suppression shoul
 
 ## Security Boundary
 
-Keep this project offline and defensive. Do not add live target scanning, exploitation, credential attacks, bypass generation, or network probing.
+Keep this project offline and defensive. Do not add black-box or runtime target testing features.

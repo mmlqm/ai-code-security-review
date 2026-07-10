@@ -9,7 +9,7 @@ injection sinks, weak crypto, unsafe deserialization, permissive deployment
 settings, and dependency hygiene gaps.
 
 This script is packaged for a Codex skill. It performs local static review only:
-no live target reconnaissance, network scanning, exploitation, or bypass tooling.
+no runtime target testing or network probing.
 """
 
 from __future__ import annotations

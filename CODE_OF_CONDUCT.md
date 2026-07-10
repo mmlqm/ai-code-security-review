@@ -15,7 +15,7 @@ Examples of unacceptable behavior:
 
 - Harassment or personal attacks.
 - Posting real secrets, private code, or sensitive logs.
-- Requests for exploitation, bypass generation, credential attacks, or unauthorized testing.
+- Requests for unauthorized runtime target testing or credential misuse.
 - Deliberately derailing issue or review threads.
 
 ## Enforcement

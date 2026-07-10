@@ -129,7 +129,7 @@ def builtin_rules(AuditRule, _rx):
         AuditRule(
             "deser-generic-unsafe", "Unsafe deserialization sink", "HIGH", "deserialization",
             _rx(r"\b(?:unserialize|ObjectInputStream|BinaryFormatter|JsonConvert\.DeserializeObject)\b"),
-            "Add type allowlists and never deserialize user-controlled payloads into executable object graphs.",
+            "Add type allowlists and never deserialize user-controlled data into executable object graphs.",
             cwe="CWE-502", confidence="medium",
             extensions=(".php", ".java", ".cs", ".js", ".ts"),
         ),
@@ -354,5 +354,4 @@ def builtin_rules(AuditRule, _rx):
             confidence="medium", filenames=("package.json",),
         ),
     ]
-
 
