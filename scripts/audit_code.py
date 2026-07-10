@@ -32,6 +32,28 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
     tomllib = None
 
+# ── Optional: enhanced redaction ─────────────────────────────────────
+try:
+    from redact import redact_line as _redact_enhanced
+    from redact import detect_high_entropy_strings, detect_yaml_secrets
+    _HAS_ENHANCED_REDACT = True
+except ImportError:
+    _HAS_ENHANCED_REDACT = False
+
+# ── Optional: regex sandbox for custom rules ─────────────────────────
+try:
+    from auditors.regex_sandbox import safe_compile_custom_rule
+    _HAS_REGEX_SANDBOX = True
+except ImportError:
+    _HAS_REGEX_SANDBOX = False
+
+# ── Optional: variable tracking ──────────────────────────────────────
+try:
+    from auditors.variable_tracker import scan_file_for_tracked_variables, TRACK_RULES
+    _HAS_VARIABLE_TRACKER = True
+except ImportError:
+    _HAS_VARIABLE_TRACKER = False
+
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
 SEVERITY_RANK = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
@@ -318,8 +340,22 @@ def _rule_from_config(raw: Any, config_path: Path, index: int) -> AuditRule:
         flags |= re.MULTILINE
     if dotall:
         flags |= re.DOTALL
+    pattern_str = str(raw["pattern"])
     try:
-        pattern = re.compile(str(raw["pattern"]), flags)
+        if _HAS_REGEX_SANDBOX:
+            pattern = safe_compile_custom_rule(pattern_str, flags, rule_id=rule_id)
+        else:
+            # Basic ReDoS guard: estimate complexity, warn if high
+            complexity = (
+                pattern_str.count("*") * 3 + pattern_str.count("+") * 3 +
+                pattern_str.count("{") * 2 + pattern_str.count("|") * 2
+            )
+            if complexity > 40:
+                raise ValueError(
+                    f"{config_path}: rules[{index}].pattern is too complex (score={complexity}). "
+                    f"Simplify or split into multiple rules with more specific patterns."
+                )
+            pattern = re.compile(pattern_str, flags)
     except re.error as exc:
         raise ValueError(f"{config_path}: rules[{index}].pattern is not valid regex: {exc}") from exc
 
@@ -746,6 +782,40 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
     findings.extend(tracked_findings)
     suppressed += tracked_suppressed
 
+    # ── High-entropy string detection ──
+    if _HAS_ENHANCED_REDACT:
+        for hs in detect_high_entropy_strings(text):
+            hfinding = AuditFinding(
+                rule_id="secret-high-entropy",
+                title=f"High-entropy string ({hs['entropy']} bits, {hs['length']} chars)",
+                severity="MEDIUM",
+                category="secrets",
+                path=rel,
+                line=1,
+                column=hs["position"] + 1,
+                snippet=f"[HASH:{hs['hash_prefix']}] len={hs['length']} entropy={hs['entropy']}",
+                remediation="Verify this is not a hardcoded credential. If it is, move to a secret manager and rotate it.",
+                confidence="low",
+            )
+            hfinding.fingerprint = _fingerprint(hfinding)
+            findings.append(hfinding)
+
+        for ys in detect_yaml_secrets(text):
+            yfinding = AuditFinding(
+                rule_id="secret-yaml-unquoted",
+                title=f"Unquoted secret-like value in YAML/TOML: {ys['key']}",
+                severity="MEDIUM",
+                category="secrets",
+                path=rel,
+                line=ys["line"],
+                column=1,
+                snippet=f"{ys['key']}: [REDACTED - {ys['value_length']} chars]",
+                remediation="Ensure this value is loaded from an environment variable or secret manager, not hardcoded.",
+                confidence="low",
+            )
+            yfinding.fingerprint = _fingerprint(yfinding)
+            findings.append(yfinding)
+
     return findings, suppressed, long_lines_skipped
 
 
@@ -1130,6 +1200,13 @@ def _dedupe_findings(findings: list[AuditFinding]) -> list[AuditFinding]:
 
 
 def _redact(line: str) -> str:
+    # Use enhanced redaction if available (covers GitHub PAT, GitLab tokens, JWT, etc.)
+    if _HAS_ENHANCED_REDACT:
+        result = _redact_enhanced(line)
+        if len(result) > 240:
+            result = result[:237] + "..."
+        return result
+    # Fallback: basic redaction
     redacted = _SECRET_ASSIGNMENT_RE.sub(lambda m: f"{m.group(1)}***redacted***{m.group(3)}", line)
     redacted = re.sub(r"\b(A3T[A-Z0-9]|AKIA|ASIA)[A-Z0-9]{16}\b", r"\1************", redacted)
     if len(redacted) > 240:
@@ -1142,6 +1219,19 @@ def _rel(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def _safe_write_path(user_path: str, project_root: Path, label: str) -> None:
+    """Warn if the output path is outside the project root, but don't block."""
+    resolved = Path(user_path).expanduser().resolve()
+    try:
+        resolved.relative_to(project_root.resolve())
+    except ValueError:
+        print(
+            f"Warning: {label} path '{user_path}' resolves outside the project root "
+            f"({project_root}). This is allowed but double-check the destination.",
+            file=sys.stderr,
+        )
 
 
 def _paint(text: str, key: str, enabled: bool) -> str:
@@ -1467,9 +1557,11 @@ def main(argv: list[str] | None = None) -> int:
             changed_paths=changed_paths,
         )
         if args.write_baseline:
+            _safe_write_path(args.write_baseline, project_root, "baseline")
             write_baseline(report, args.write_baseline)
         output = render_report(report, args.format, limit=args.limit, color=_use_color(args.color))
         if args.output:
+            _safe_write_path(args.output, project_root, "output")
             Path(args.output).expanduser().write_text(output + "\n", encoding="utf-8")
         else:
             print(output)
