@@ -141,6 +141,52 @@ multiline = true
             self.assertEqual(report.summary.long_lines_skipped, 1)
             self.assertIn("scan-long-lines-skipped", {finding.rule_id for finding in report.findings})
 
+    def test_python_sql_variable_tracking_finds_cross_line_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app.py",
+                "def load_user(user_id, cursor):\n"
+                "    sql = f\"SELECT * FROM users WHERE id = {user_id}\"\n"
+                "    return cursor.execute(sql)\n",
+            )
+
+            report = audit_code.scan_project(root)
+
+            self.assertIn("sql-python-variable-track", {finding.rule_id for finding in report.findings})
+
+    def test_python_shell_variable_tracking_finds_cross_line_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "tasks.py",
+                "def archive(name):\n"
+                "    cmd = f\"tar czf /tmp/{name}.tgz {name}\"\n"
+                "    return subprocess.run(cmd, shell=True)\n",
+            )
+
+            report = audit_code.scan_project(root)
+
+            self.assertIn("shell-python-variable-track", {finding.rule_id for finding in report.findings})
+
+    def test_tracked_variable_reassignment_clears_previous_risk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app.py",
+                "def load_user(user_id, cursor):\n"
+                "    sql = f\"SELECT * FROM users WHERE id = {user_id}\"\n"
+                "    sql = \"SELECT * FROM users WHERE id = ?\"\n"
+                "    return cursor.execute(sql, [user_id])\n",
+            )
+
+            report = audit_code.scan_project(root)
+
+            self.assertNotIn("sql-python-variable-track", {finding.rule_id for finding in report.findings})
+
 
 if __name__ == "__main__":
     unittest.main()

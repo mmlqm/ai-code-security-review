@@ -26,6 +26,8 @@ class AiReviewPackTests(unittest.TestCase):
 
             self.assertIn("AI-Assisted Code Security Review Pack", pack)
             self.assertIn("Use $ai-code-security-review", pack)
+            self.assertIn("Adaptive Review Scope", pack)
+            self.assertIn("Estimated tokens", pack)
             self.assertIn("auth-placeholder", pack)
             self.assertIn("app/auth.py", pack)
 

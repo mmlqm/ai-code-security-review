@@ -26,6 +26,9 @@ class BuiltinRuleTests(unittest.TestCase):
         self.assertIn("mongo-query-from-request", ids)
         self.assertIn("mass-assignment-js", ids)
         self.assertIn("ssti-render-template-string", ids)
+        self.assertIn("secret-high-entropy-string", ids)
+        self.assertIn("secret-unquoted-config-value", ids)
+        self.assertIn("sql-python-variable-track", ids)
 
     def test_high_value_ai_failure_rules_match(self):
         cases = [
@@ -43,6 +46,8 @@ class BuiltinRuleTests(unittest.TestCase):
             ("cors-wildcard-with-credentials", "server.js", 'app.use(cors({ origin: "*", credentials: true }))\n'),
             ("bcrypt-low-rounds", "auth.js", "bcrypt.hash(password, 4)\n"),
             ("terraform-public-s3", "bucket.tf", 'acl = "public-read"\n'),
+            ("secret-unquoted-config-value", "values.yaml", "password: Prod9N8m7K6j5H4g3F2e1\n"),
+            ("secret-high-entropy-string", "config.py", 'TOKEN = "N9fK7qP2sL4vX8zA1bC3dE5fG7hJ9kLm"\n'),
         ]
 
         for rule_id, rel, source in cases:

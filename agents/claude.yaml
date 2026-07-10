@@ -38,6 +38,9 @@ system_prompt: |
 
   LEVEL 3 — ADVERSARIAL VERIFICATION (when user requests "verify" or after
   findings are produced)
+  Before final reporting, run chain synthesis: combine related scanner and LLM
+  findings only when concrete code evidence shows a higher-impact path.
+
   For each HIGH and CRITICAL finding, actively try to prove it is NOT a bug:
   - Is there a framework feature that prevents exploitation?
   - Is there a compensating control you missed on first read?

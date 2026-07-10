@@ -532,9 +532,62 @@ Return a JSON object with:
 
 ---
 
+## Dimension 0: Chain Synthesis
+
+Run this after all seven dimensions complete. Its job is to find risks that
+look moderate in isolation but combine into a release blocker.
+
+```
+[ROLE]
+You are the final review lead. You do not search for new files first. You read
+all scanner findings, all LLM dimension findings, and the trust boundary map
+together, then identify attack chains supported by evidence already found.
+
+[FOCUS]
+Look for chains where two or more LOW/MEDIUM/HIGH findings combine into a
+larger impact:
+
+- Info leak + SSRF = internal service access or metadata exposure
+- Auth bypass + mass assignment = privilege escalation
+- Debug endpoint + unsafe deserialization = code execution risk
+- Race condition + idempotency gap = double-spend or duplicate fulfillment
+- Weak token generation + verbose auth errors = account takeover path
+- Missing tenant filter + predictable identifiers = cross-tenant data access
+- CI secret exposure + unpinned action = supply-chain credential compromise
+
+[METHODOLOGY]
+1. Group findings by affected trust boundary, identity context, and data object.
+2. For each group, ask whether one finding supplies the prerequisite for another.
+3. Keep only chains with concrete code locations and a plausible execution path.
+4. Escalate severity only when combined impact is higher than any individual
+   finding and the prerequisites are realistic for the target application.
+5. If a chain is speculative, leave it as MEDIUM with an explicit validation gap.
+
+[OUTPUT_SCHEMA]
+Return a JSON object with a "chains" array. Each chain:
+{
+  "title": "one-line chain summary",
+  "severity": "CRITICAL|HIGH|MEDIUM",
+  "confidence": "high|medium|low",
+  "linked_findings": ["finding-id-or-location", "finding-id-or-location"],
+  "chain_path": ["step 1", "step 2", "step 3"],
+  "impact": "what the attacker gains if the chain holds",
+  "why_severity_changed": "why the combined risk is worse than each finding alone",
+  "remediation": "fix the root control break, not only one symptom",
+  "regression_tests": ["test that would break the chain"]
+}
+
+[CONSTRAINTS]
+- Do not invent missing prerequisites.
+- Do not provide exploit payloads or live-target instructions.
+- Prefer one strong chain over many weak combinations.
+```
+
+---
+
 ## Merging and Prioritizing Findings
 
-After all seven dimensions complete, merge findings with this algorithm:
+After all seven dimensions and Dimension 0 complete, merge findings with this algorithm:
 
 ```
 1. For each finding, compute a priority score:
@@ -556,7 +609,13 @@ After all seven dimensions complete, merge findings with this algorithm:
    - Scanner finding that LLM confirms is a false positive
      → mark as "likely false positive: {reason}"
 
-4. Sort by priority descending
+4. Merge chain synthesis:
+   - Chain with concrete evidence and higher combined impact
+     → report as a separate finding with cross-references
+   - Speculative chain without a complete path
+     → keep as "requires validation", not a release blocker
+
+5. Sort by priority descending
 ```
 
 ## Report Template

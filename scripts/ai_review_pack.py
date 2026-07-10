@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -147,6 +148,40 @@ def _format_findings(report: audit_code.AuditReport, limit: int) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough context estimate for mixed English/Chinese review packs."""
+    zh_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    en_chars = len(re.sub(r"[\u4e00-\u9fff]", "", text))
+    return en_chars // 4 + (zh_chars * 2 // 3)
+
+
+def _adaptive_dimension_notes(report: audit_code.AuditReport, hotspots: list[str]) -> list[str]:
+    categories = {finding.category for finding in report.findings}
+    rule_ids = {finding.rule_id for finding in report.findings}
+    paths = [finding.path.lower() for finding in report.findings] + [path.lower() for path in hotspots]
+
+    def has_path(*needles: str) -> bool:
+        return any(any(needle in path for needle in needles) for path in paths)
+
+    notes = [
+        "- Auth & Access Control: full pass if auth/session/token/permission files or findings are present; otherwise sample route protection.",
+        "- Data Flow & Injection: full pass when injection, SSRF, XSS, path traversal, or deserialization findings exist.",
+        "- Business Logic & Race: always review state-changing payment, billing, admin, and workflow code when present.",
+        "- Architecture & Trust: always map trust boundaries for exposed services and internal APIs.",
+    ]
+    if categories & {"crypto", "secrets"} or any("crypto" in rule_id or "jwt" in rule_id for rule_id in rule_ids):
+        notes.append("- Crypto & Secrets: full pass; scanner found crypto/secrets signals.")
+    else:
+        notes.append("- Crypto & Secrets: light pass; search for encrypt/decrypt/hash/random/key material before deep algorithm review.")
+    if categories & {"supply-chain", "deployment"} or has_path("docker", "k8s", "kubernetes", ".github/workflows", ".tf", "package.json", "requirements"):
+        notes.append("- Supply Chain & Deployment: full pass for Docker/K8s/CI/dependency files discovered by scanner or hotspot heuristics.")
+    else:
+        notes.append("- Supply Chain & Deployment: skip deep Docker/K8s/CI review unless those files appear during source reading.")
+    if report.summary.findings_total == 0:
+        notes.append("- Scanner found no findings; spend AI budget on auth/dataflow/business logic rather than restating a clean scan.")
+    return notes
+
+
 def build_pack(
     root: str | os.PathLike[str],
     *,
@@ -179,6 +214,7 @@ def build_pack(
     changed = [item for item in changed_paths if item]
     prompt = _agent_prompt(agent, depth)
     config_hint = config_path or ".audit-code.toml"
+    dimension_notes = _adaptive_dimension_notes(report, hotspots)
 
     lines = [
         "# AI-Assisted Code Security Review Pack",
@@ -203,6 +239,10 @@ def build_pack(
         "```text",
         prompt,
         "```",
+        "",
+        "## Adaptive Review Scope",
+        "",
+        *dimension_notes,
         "",
         "## Scanner Output",
         "",
@@ -241,6 +281,18 @@ def build_pack(
             "",
         ]
     )
+    pack = "\n".join(lines)
+    estimated_tokens = _estimate_tokens(pack)
+    budget_lines = [
+        "## Context Budget",
+        "",
+        f"- Estimated tokens: {estimated_tokens:,}",
+    ]
+    if estimated_tokens > 100_000:
+        budget_lines.append(
+            f"- Warning: this may exceed model context. Try `--finding-limit {max(finding_limit // 2, 10)}` or `--depth fast`."
+        )
+    lines.extend(["", *budget_lines, ""])
     return "\n".join(lines)
 
 

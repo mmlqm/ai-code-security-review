@@ -72,6 +72,19 @@ SENSITIVE_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 
+PY_ASSIGN_RE = re.compile(r"^\s*(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<expr>.+)$")
+PY_SQL_KEYWORD_RE = re.compile(r"\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE|WITH)\b", re.IGNORECASE)
+PY_DYNAMIC_SQL_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9_])f[\"'][^\"']*\{[^\"']*\}[^\"']*[\"']|"
+    r"[\"'][^\"']*\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE|WITH)\b[^\"']*[\"']\s*(?:%|\+|\.format\s*\()|"
+    r"(?:request\.|args\.get|form\.get|input\s*\(|params|query)"
+)
+PY_SHELL_BUILD_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9_])f[\"'][^\"']*\{[^\"']*\}[^\"']*[\"']|"
+    r"[\"'][^\"']*[\"']\s*(?:%|\+|\.format\s*\()|"
+    r"(?:request\.|args\.get|form\.get|input\s*\(|params|query)"
+)
+
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)(\b(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|"
     r"private[_-]?key|access[_-]?key)\b\s*[:=]\s*[\"'])([^\"']+)([\"'])"
@@ -651,7 +664,7 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
     next_line_suppressions: dict[int, set[str]] = {}
     lines = text.splitlines()
     line_rules = [rule for rule in rules if rule.scan_mode == "line"]
-    content_rules = [rule for rule in rules if rule.scan_mode != "line"]
+    content_rules = [rule for rule in rules if rule.scan_mode in {"file", "sliding_window"}]
 
     for line_no, line in enumerate(lines, 1):
         if len(line) > 5000:
@@ -729,7 +742,86 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
         finding.fingerprint = _fingerprint(finding)
         findings.append(finding)
 
+    tracked_findings, tracked_suppressed = _scan_tracked_variables(path, rel, lines, rules)
+    findings.extend(tracked_findings)
+    suppressed += tracked_suppressed
+
     return findings, suppressed, long_lines_skipped
+
+
+def _scan_tracked_variables(
+    path: Path,
+    rel: str,
+    lines: list[str],
+    rules: list[AuditRule],
+) -> tuple[list[AuditFinding], int]:
+    if path.suffix.lower() != ".py":
+        return [], 0
+    rule_by_id = {rule.id: rule for rule in rules}
+    sql_rule = rule_by_id.get("sql-python-variable-track")
+    shell_rule = rule_by_id.get("shell-python-variable-track")
+    if not sql_rule and not shell_rule:
+        return [], 0
+
+    tracked: dict[str, tuple[AuditRule, int, str]] = {}
+    findings: list[AuditFinding] = []
+    suppressed = 0
+    for line_no, line in enumerate(lines, 1):
+        if len(line) > 5000 or _is_probable_comment(line, path.suffix.lower()):
+            continue
+        suppressions, _ = _parse_suppressions(line)
+        assignment = PY_ASSIGN_RE.match(line)
+        if assignment:
+            var_name = assignment.group("var")
+            expr = assignment.group("expr")
+            tracked.pop(var_name, None)
+            if sql_rule and _is_dynamic_sql_assignment(expr):
+                tracked[var_name] = (sql_rule, line_no, line.strip())
+            elif shell_rule and _is_shell_command_assignment(var_name, expr):
+                tracked[var_name] = (shell_rule, line_no, line.strip())
+            continue
+        for var_name, (rule, source_line, source_snippet) in list(tracked.items()):
+            if not _tracked_variable_reaches_sink(var_name, rule.id, line):
+                continue
+            if _is_suppressed(rule.id, suppressions):
+                suppressed += 1
+                continue
+            snippet = _redact(f"{line.strip()}  # {var_name} assigned at line {source_line}: {source_snippet}")
+            findings.append(
+                _make_finding(
+                    rule=rule,
+                    rel=rel,
+                    line_no=line_no,
+                    column=max(line.find(var_name) + 1, 1),
+                    snippet=snippet,
+                    severity=_effective_severity(rule, rel),
+                )
+            )
+    return findings, suppressed
+
+
+def _is_dynamic_sql_assignment(expr: str) -> bool:
+    return bool(PY_SQL_KEYWORD_RE.search(expr) and PY_DYNAMIC_SQL_RE.search(expr))
+
+
+def _is_shell_command_assignment(var_name: str, expr: str) -> bool:
+    lower = expr.lower()
+    var_lower = var_name.lower()
+    looks_like_command = var_lower in {"cmd", "command", "shell_cmd", "shell_command"} or any(
+        token in lower for token in ("shlex", "subprocess", "os.system", "popen", "cmd", "command")
+    )
+    if not looks_like_command:
+        return False
+    return bool(PY_SHELL_BUILD_RE.search(expr))
+
+
+def _tracked_variable_reaches_sink(var_name: str, rule_id: str, line: str) -> bool:
+    escaped = re.escape(var_name)
+    if rule_id == "sql-python-variable-track":
+        return bool(re.search(rf"\.execute(?:many)?\s*\(\s*{escaped}\b", line))
+    if rule_id == "shell-python-variable-track":
+        return bool(re.search(rf"\b(?:os\.system|os\.popen|subprocess\.[A-Za-z_]+|commands\.getoutput)\s*\(\s*{escaped}\b", line))
+    return False
 
 
 def _iter_content_matches(
@@ -865,6 +957,7 @@ def _project_finding(
 def _validate(name: str, match: re.Match[str], line: str, path: Path) -> bool:
     validators: dict[str, Validator] = {
         "secret_value": _validate_secret_value,
+        "secret_entropy_value": _validate_secret_entropy_value,
         "requirements_unpinned": _validate_requirements_unpinned,
         "docker_from_unpinned": _validate_docker_from_unpinned,
         "not_rule_definition": _validate_not_rule_definition,
@@ -886,6 +979,27 @@ def _validate_secret_value(match: re.Match[str], line: str, path: Path) -> bool:
     has_alpha = any(c.isalpha() for c in value)
     has_other = any(c.isdigit() or not c.isalnum() for c in value)
     return len(value) >= 16 and has_alpha and has_other and _entropy(value) >= 3.0
+
+
+def _validate_secret_entropy_value(match: re.Match[str], line: str, path: Path) -> bool:
+    value = match.groupdict().get("value", "")
+    lower = value.lower()
+    if not value or len(value) < 32:
+        return False
+    if any(token in lower for token in (
+        "example", "sample", "dummy", "placeholder", "changeme", "your",
+        "aaaaaaaa", "bbbbbbbb", "cccccccc", "00000000", "11111111",
+    )):
+        return False
+    if any(marker in line.lower() for marker in ("sha256", "sha512", "integrity", "checksum", "fingerprint")):
+        return False
+    if value.startswith(("data:image/", "-----begin")):
+        return False
+    if re.fullmatch(r"[0-9a-fA-F]{32,}", value):
+        return False
+    has_alpha = any(c.isalpha() for c in value)
+    has_digit = any(c.isdigit() for c in value)
+    return has_alpha and has_digit and _entropy(value) >= 4.2
 
 
 def _validate_requirements_unpinned(match: re.Match[str], line: str, path: Path) -> bool:

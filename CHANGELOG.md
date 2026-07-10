@@ -12,6 +12,11 @@ This project uses Conventional Commits for commit messages.
 - Agent metadata for Codex/OpenAI and Claude-oriented review workflows.
 - Claude/Codex AI-assisted review-pack generator in `scripts/ai_review_pack.py`.
 - Ready-to-edit scanner policy template in `.audit-code.example.toml`.
+- Same-file Python variable tracking for dynamic SQL and shell command strings.
+- High-entropy unknown-token detection and unquoted YAML/TOML/properties secret detection.
+- AI review-pack context budget estimates and adaptive dimension guidance.
+- Dimension 0 attack-chain synthesis guidance for deep LLM review.
+- Pre-commit hook metadata in `.pre-commit-hooks.yaml`.
 - Built-in rules split into `scripts/rules_builtin.py`.
 - `.auditignore` support.
 - Incremental changed-file scanning with `--changed-files` and `--changed-files-from`.

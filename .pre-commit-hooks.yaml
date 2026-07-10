@@ -1,0 +1,7 @@
+- id: ai-code-security-review
+  name: AI Code Security Review
+  entry: python scripts/audit_code.py
+  args: [".", "--fail-on", "HIGH", "--format", "text"]
+  language: python
+  pass_filenames: false
+  always_run: true

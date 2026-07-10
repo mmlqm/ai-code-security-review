@@ -32,6 +32,21 @@ def builtin_rules(AuditRule, _rx):
             cwe="CWE-798", confidence="medium", scan_comments=True, validator="secret_value",
         ),
         AuditRule(
+            "secret-unquoted-config-value", "Unquoted secret-like config value", "HIGH", "secrets",
+            _rx(r"^\s*(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|"
+                r"private[_-]?key|access[_-]?key)\s*[:=]\s*(?P<value>[^\s#\"'][^#\r\n]{7,})\s*(?:#.*)?$"),
+            "Do not commit runtime secrets in config files. Load them from environment variables or a secret manager.",
+            cwe="CWE-798", confidence="medium", scan_comments=True,
+            extensions=(".yml", ".yaml", ".toml", ".properties", ".ini", ".conf", ".cfg", ".env"),
+            validator="secret_value",
+        ),
+        AuditRule(
+            "secret-high-entropy-string", "High-entropy string may be an unknown token", "MEDIUM", "secrets",
+            _rx(r"(?P<value>[A-Za-z0-9+/=_-]{32,})", 0),
+            "Verify this is not a hardcoded credential; if it is, move it to a secret manager and rotate it.",
+            cwe="CWE-798", confidence="low", scan_comments=True, validator="secret_entropy_value",
+        ),
+        AuditRule(
             "secret-default-credential", "Default or placeholder credential", "HIGH", "secrets",
             _rx(r"\b(?:password|passwd|pwd|jwt[_-]?secret|secret[_-]?key|client[_-]?secret)\b\s*[:=]\s*"
                 r"[\"'](?:admin|password|passwd|changeme|change_me|secret|test|demo|123456|dev|local)[\"']"),
@@ -63,6 +78,12 @@ def builtin_rules(AuditRule, _rx):
             cwe="CWE-89", confidence="medium", extensions=(".py",),
         ),
         AuditRule(
+            "sql-python-variable-track", "Dynamic SQL variable later passed to execute()", "HIGH", "injection",
+            _rx(r"\b[A-Za-z_][A-Za-z0-9_]*\b"),
+            "Use parameterized queries or ORM bind parameters instead of carrying formatted SQL into execute().",
+            cwe="CWE-89", confidence="medium", extensions=(".py",), scan_mode="tracked_variable",
+        ),
+        AuditRule(
             "sql-js-template-query", "SQL query built with template interpolation", "HIGH", "injection",
             _rx(r"\b(?:query|execute|raw)\s*\(\s*`[^`]*\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^`]*\$\{"),
             "Use prepared statements or parameter binding; never interpolate request data into SQL.",
@@ -79,6 +100,12 @@ def builtin_rules(AuditRule, _rx):
             _rx(r"\b(?:os\.system|os\.popen|commands\.getoutput)\s*\("),
             "Avoid shell execution for request-controlled data; use safe library APIs.",
             cwe="CWE-78", confidence="medium", extensions=(".py",),
+        ),
+        AuditRule(
+            "shell-python-variable-track", "Shell command variable later executed", "HIGH", "injection",
+            _rx(r"\b[A-Za-z_][A-Za-z0-9_]*\b"),
+            "Avoid building shell command strings before execution; use argument arrays and strict allowlists.",
+            cwe="CWE-78", confidence="medium", extensions=(".py",), scan_mode="tracked_variable",
         ),
         AuditRule(
             "shell-js-child-process", "child_process exec sink", "HIGH", "injection",

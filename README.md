@@ -59,6 +59,10 @@ The pack includes scanner output, redacted findings, security-sensitive file hot
 - **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
 - **LLM deep analysis** — Seven-dimension security review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
 - **AI review pack generator** — `scripts/ai_review_pack.py` creates Claude/Codex-ready Markdown from local scanner results.
+- **Lightweight variable tracking** — Same-file Python tracking catches dynamic SQL or shell command strings that are assigned before reaching sinks.
+- **Unknown token detection** — High-entropy strings and unquoted YAML/TOML/properties secrets are flagged for review.
+- **Attack-chain synthesis** — Deep analysis includes a Dimension 0 merge pass that links related lower-severity findings into higher-impact paths when evidence supports it.
+- **Context-aware AI packs** — Review packs include rough token estimates and adaptive dimension guidance so Claude/Codex spend attention where the repository has signals.
 - Text, JSON, Markdown, and SARIF reports.
 - CI-friendly exit codes with configurable severity thresholds.
 - GitHub Actions annotations.
@@ -74,6 +78,7 @@ The pack includes scanner output, redacted findings, security-sensitive file hot
 - Fingerprints for stable tracking across reports.
 - Expanded AI-failure rules for JWT none algorithms, MongoDB injection, mass assignment, SSTI, open redirects, XSS sinks, weak bcrypt cost factors, public S3 ACLs, and risky framework defaults.
 - Codex skill metadata and workflow guidance.
+- Pre-commit hook metadata in `.pre-commit-hooks.yaml`.
 
 ## Quick Start
 
@@ -124,6 +129,16 @@ Build an AI-assisted review pack:
 
 ```bash
 python scripts/ai_review_pack.py . --agent codex --depth deep
+```
+
+Use as a pre-commit hook:
+
+```yaml
+repos:
+  - repo: https://github.com/mmlqm/ai-code-security-review
+    rev: main
+    hooks:
+      - id: ai-code-security-review
 ```
 
 ## Configuration
@@ -250,7 +265,7 @@ ai-code-security-review/
 ├── scripts/
 │   ├── ai_review_pack.py            # Claude/Codex AI-assisted review pack generator
 │   ├── audit_code.py                # Deterministic fast-gate scanner engine
-│   └── rules_builtin.py             # 48 built-in detection rule catalog
+│   └── rules_builtin.py             # 52 built-in detection rule catalog
 └── tests/
     ├── test_audit_code.py           # Scanner feature tests
     ├── test_engine_features.py      # Engine feature tests

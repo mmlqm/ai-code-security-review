@@ -25,6 +25,15 @@ Important settings:
 - `exclude`: glob patterns such as `generated/**`.
 - `baseline`: path to a JSON baseline file.
 
+High-entropy token detection is intentionally conservative and low-confidence.
+If a repository stores many benign generated identifiers, disable
+`secret-high-entropy-string` in `.audit-code.toml` after review:
+
+```toml
+[settings]
+disabled_rules = ["secret-high-entropy-string"]
+```
+
 ## Audit Ignore
 
 Use `.auditignore` for generated, vendored, or release-output paths that should never be scanned:
@@ -113,6 +122,11 @@ Supported scan modes:
 Use `dotall = true` only when `.` should match newlines.
 
 Keep custom rules narrow. Prefer a clear policy rule that catches one local risk over a broad expression that floods CI.
+
+Built-in engine-only rules such as `sql-python-variable-track` and
+`shell-python-variable-track` use same-file variable tracking rather than a
+custom regular expression. They can be disabled like any other rule, but custom
+rules cannot currently define new variable-tracking behavior.
 
 ## Suppressions
 

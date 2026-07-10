@@ -77,8 +77,9 @@ When the user requests a deep review, follow the workflow in `references/deep-an
    | Architecture & Trust | Trust boundary violations, missing defense layers, implicit security assumptions |
 
 3. **Merge and prioritize** - deduplicate across dimensions, cross-reference scanner findings
-4. **Adversarial verify** - for each HIGH/CRITICAL, actively try to prove it is NOT exploitable
-5. **Report** - release blockers first, then review-required, then hardening
+4. **Chain synthesize** - combine related findings only when concrete evidence shows a higher-impact path
+5. **Adversarial verify** - for each HIGH/CRITICAL, actively try to prove it is NOT exploitable
+6. **Report** - release blockers first, then review-required, then hardening
 
 ## Scanner Commands
 
@@ -200,6 +201,14 @@ For each serious finding, verify:
 
 Read `references/review-policy.md` when you need severity guidance, report shape, or false-positive handling.
 
+## Scanner Strengths To Use
+
+- Same-file Python variable tracking catches dynamic SQL or shell command strings that are assigned before reaching `execute()` or subprocess sinks.
+- High-entropy unknown-token detection catches custom credentials that do not match cloud-provider formats.
+- YAML/TOML/properties unquoted secret detection catches common config leaks such as Helm values.
+- AI review packs include adaptive review scope and rough token estimates before Claude/Codex deep analysis.
+- Dimension 0 chain synthesis in `references/deep-analysis.md` links related findings into a higher-impact path only when evidence supports escalation.
+
 ## Boundaries
 
 Keep the work defensive and code-focused:
@@ -215,8 +224,9 @@ Keep the work defensive and code-focused:
 |----------|---------|
 | `scripts/ai_review_pack.py` | Claude/Codex AI-assisted review pack generator |
 | `scripts/audit_code.py` | Deterministic fast-gate scanner, config loader, report renderer |
-| `scripts/rules_builtin.py` | 48 built-in detection rules |
+| `scripts/rules_builtin.py` | 52 built-in detection rules |
 | `.audit-code.example.toml` | Ready-to-edit scanner and policy configuration template |
+| `.pre-commit-hooks.yaml` | Pre-commit hook metadata |
 | `references/deep-analysis.md` | Full LLM deep analysis methodology with 7 dimension prompts |
 | `references/review-policy.md` | Triage and reporting guidance |
 | `references/configuration.md` | Config, custom rules, baseline, and suppression guidance |
