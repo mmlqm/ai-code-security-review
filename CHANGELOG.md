@@ -8,6 +8,8 @@ This project uses Conventional Commits for commit messages.
 
 ### Added
 
+- LLM deep-analysis workflow with seven review dimensions and structured report guidance.
+- Agent metadata for Codex/OpenAI and Claude-oriented review workflows.
 - Built-in rules split into `scripts/rules_builtin.py`.
 - `.auditignore` support.
 - Incremental changed-file scanning with `--changed-files` and `--changed-files-from`.

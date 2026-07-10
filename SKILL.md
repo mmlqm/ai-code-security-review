@@ -1,47 +1,86 @@
 ---
 name: ai-code-security-review
-description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when Codex is asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, authorization placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookie settings, Docker/Kubernetes risks, dependency hygiene, missing tests, missing CI, custom team policy rules, .auditignore exclusions, incremental changed-file scans, baselines for existing findings, GitHub Actions annotations, colorized terminal output, or text, JSON, Markdown, and SARIF security reports. This skill is for code review and delivery gating only; it does not perform network reconnaissance, vulnerability scanning of live targets, exploitation, credential attacks, or bypass generation.
+description: Offline defensive security review for AI-generated or rapidly produced application code before release. Use when asked to review a repository, pull request, generated code, CI gate, or file set for hardcoded secrets, authorization placeholders, injection sinks, weak crypto/TLS/JWT usage, unsafe deserialization, permissive CORS/CSRF/cookie settings, Docker/Kubernetes risks, dependency hygiene, missing tests, missing CI, custom team policy rules, .auditignore exclusions, incremental changed-file scans, baselines for existing findings, GitHub Actions annotations, colorized terminal output, or text, JSON, Markdown, and SARIF security reports. Supports deep LLM-driven analysis across seven dimensions (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture). This skill is for code review and delivery gating only; it does not perform network reconnaissance, vulnerability scanning of live targets, exploitation, credential attacks, or bypass generation.
 ---
 
 # AI Code Security Review
 
 ## Overview
 
-Review application code before release using an offline, stdlib-only scanner plus manual triage. Prefer this skill for defensive review of code that is AI-generated, rushed, or headed into CI.
+Review application code before release using a two-layer defense:
 
-## Workflow
+1. **Fast Gate** - `audit_code.py`: deterministic, zero-dependency regex scanner. Catches hardcoded secrets, obvious injection sinks, weak crypto, and misconfigurations in <100ms. Runs on every commit.
 
-1. Identify the review scope: repository root, changed files, generated output folder, or a single file.
-2. Run the bundled scanner from the skill directory:
+2. **Deep Analysis** - LLM-driven review across seven dimensions. Finds what regex cannot: logic flaws, data flow vulnerabilities, business logic bugs, architectural trust boundary violations. Triggered on PR review or pre-release audit.
 
-```bash
-python scripts/audit_code.py /path/to/repo --format markdown --fail-on HIGH
+```
+pre-commit -> audit_code.py (fast gate) -> PASS -> commit
+                    |                         |
+                    v                         v
+              findings.json              PR / Release
+                    |
+                    v
+              LLM Deep Analysis (7 dimensions)
+                    |
+                    v
+              Unified Report
 ```
 
-3. Inspect CRITICAL and HIGH findings in source before claiming they are real. Treat the scanner as a deterministic first pass, not final judgment.
-4. When asked to fix issues, patch the smallest relevant code paths and add or update focused tests where the risk warrants it.
-5. Report release blockers first, then non-blocking hardening items, then residual risk and any scan limitations.
+## Quick Start
 
-## Scanner
-
-Use `scripts/audit_code.py` for offline checks. It reads local files only and does not call network services or external scanners.
-
-Common commands:
+### Fast Gate (always run first)
 
 ```bash
 # Human-readable review
 python scripts/audit_code.py /path/to/repo
 
-# Markdown report for PR comments or release notes
+# Fail on high or critical findings
+python scripts/audit_code.py /path/to/repo --fail-on HIGH
+
+# JSON for machine consumption
+python scripts/audit_code.py /path/to/repo --format json --fail-on none
+```
+
+### Deep Analysis (PR review / pre-release)
+
+When the user requests a deep review, follow the workflow in `references/deep-analysis.md`:
+
+1. **Run the scanner** - always first, for deterministic surface coverage
+2. **Review across seven dimensions:**
+
+   | Dimension | What it finds |
+   |-----------|--------------|
+   | Auth & Access Control | Bypassable gates, missing checks, token flaws, session fixation, JWT injection |
+   | Data Flow & Injection | Tainted data from source to dangerous sink, second-order injection, ORM escape hatches |
+   | Crypto & Secrets | Algorithm misuse, weak randomness, hardcoded keys, missing authentication on encryption |
+   | Error Handling & Info Leak | Stack traces, debug endpoints, user enumeration, secrets in logs, timing side-channels |
+   | Business Logic & Race | TOCTOU, workflow skips, negative value exploits, replay attacks, idempotency gaps |
+   | Supply Chain & Deployment | Docker/K8s privilege risks, CI secret leaks, unpinned dependencies, artifact integrity |
+   | Architecture & Trust | Trust boundary violations, missing defense layers, implicit security assumptions |
+
+3. **Merge and prioritize** - deduplicate across dimensions, cross-reference scanner findings
+4. **Adversarial verify** - for each HIGH/CRITICAL, actively try to prove it is NOT exploitable
+5. **Report** - release blockers first, then review-required, then hardening
+
+## Scanner Commands
+
+```bash
+# Basic scan
+python scripts/audit_code.py /path/to/repo
+
+# Markdown report for PR comments
 python scripts/audit_code.py /path/to/repo --format markdown --output ai-code-security.md
 
 # SARIF for code scanning platforms
 python scripts/audit_code.py /path/to/repo --format sarif --output ai-code-security.sarif
 
+# JSON for feeding into LLM deep analysis
+python scripts/audit_code.py /path/to/repo --format json --fail-on none
+
 # Report without failing CI
 python scripts/audit_code.py /path/to/repo --fail-on none
 
-# Include tests, examples, and fixtures when they are in release scope
+# Include tests, examples, and fixtures
 python scripts/audit_code.py /path/to/repo --include-tests
 
 # Generate a starter config with custom-rule examples
@@ -69,6 +108,64 @@ Fail thresholds: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `none`.
 
 Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, multi-line scan modes, and default gate settings. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
 
+## Deep Analysis Prompt Templates
+
+When invoking the LLM for deep review, use the dimension-specific prompts
+defined in `references/deep-analysis.md`. Quick reference:
+
+### Auth & Access Control
+```
+Read every auth middleware, guard, and decorator. For each protected route,
+verify no path reaches the handler without passing through a gate. Check
+for: different HTTP methods bypassing middleware, header-based auth confusion
+(X-Forwarded-For, X-Original-URL), JWT algorithm/key injection, session
+fixation, missing token rotation on privilege change.
+```
+
+### Data Flow & Injection
+```
+Trace every external input (query params, body, headers, file upload, DB
+read, API response) to every dangerous sink (SQL execute, shell exec, eval,
+file open, template render, deserialization, HTTP request). Check sanitization
+at each step. Look for second-order paths: data stored now, used unsafely later.
+```
+
+### Crypto & Secrets
+```
+Find every encrypt/decrypt/sign/hash/random call. Verify algorithm, key size,
+IV handling, mode, padding. Check key material sources. Search for secrets in:
+variable names, config files, test fixtures, comments, commit messages.
+```
+
+### Error Handling & Info Leak
+```
+Find every try/catch, error middleware, and log statement. Check what
+information reaches the user. Test for user enumeration via different
+error messages or timing. Check debug/dev config cannot reach production.
+```
+
+### Business Logic & Race Conditions
+```
+Map every state-changing operation: input -> validation -> read -> decision
+-> write. Look for gaps between decision and write where concurrent requests
+could interleave. Check numeric inputs for boundary abuse. Verify idempotency
+on payment/transfer operations.
+```
+
+### Supply Chain & Deployment
+```
+Read Dockerfiles, K8s manifests, CI workflows. Check for: privileged
+containers, secrets in build args, default ServiceAccounts with RBAC,
+pipeline execution of unreviewed code, unpinned external actions.
+```
+
+### Architecture & Trust
+```
+Map trust boundaries. For each boundary: what controls exist, what's
+missing. Identify implicit assumptions the code makes about its callers.
+Ask: what breaks if each component receives malicious input?
+```
+
 ## Manual Triage
 
 For each serious finding, verify:
@@ -93,7 +190,12 @@ Keep the work defensive and code-focused:
 
 ## Resources
 
-- `scripts/audit_code.py`: Offline deterministic scanner, config loader, traversal engine, and report renderer.
-- `scripts/rules_builtin.py`: Built-in rule catalog.
-- `references/review-policy.md`: Triage and reporting guidance for release reviews.
-- `references/configuration.md`: Config, custom rules, baseline, and suppression guidance.
+| Resource | Purpose |
+|----------|---------|
+| `scripts/audit_code.py` | Deterministic fast-gate scanner, config loader, report renderer |
+| `scripts/rules_builtin.py` | 48 built-in detection rules |
+| `references/deep-analysis.md` | Full LLM deep analysis methodology with 7 dimension prompts |
+| `references/review-policy.md` | Triage and reporting guidance |
+| `references/configuration.md` | Config, custom rules, baseline, and suppression guidance |
+| `agents/claude.yaml` | Claude-specific agent configuration |
+| `agents/openai.yaml` | Codex/OpenAI agent configuration |

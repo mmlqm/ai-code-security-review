@@ -17,9 +17,24 @@ AI-generated code often looks complete before it is safe to ship. This tool focu
 
 The goal is not to replace Semgrep, CodeQL, or a mature SAST program. The goal is a fast, boring, offline gate that catches high-signal mistakes before release.
 
+### Two-Layer Defense
+
+```
+Layer 1 — Fast Gate (audit_code.py)         Layer 2 — Deep Analysis (LLM)
+─────────────────────────────────────       ─────────────────────────────
+Deterministic regex patterns                AI reasoning across files
+<100ms, zero dependencies                   7 review dimensions
+Every commit                                PR review / pre-release
+Catches: secrets, obvious sinks, config     Catches: logic flaws, data flow,
+                                              business logic, trust boundaries
+```
+
+Read `references/deep-analysis.md` for the full LLM-driven deep review methodology.
+
 ## Features
 
-- Pure Python standard library. No pip install and no network access.
+- **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
+- **LLM deep analysis** — Seven-dimension security review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
 - Text, JSON, Markdown, and SARIF reports.
 - CI-friendly exit codes with configurable severity thresholds.
 - GitHub Actions annotations.
@@ -187,14 +202,21 @@ jobs:
 
 ```text
 ai-code-security-review/
-├── SKILL.md
-├── agents/openai.yaml
+├── SKILL.md                         # Skill entry point + deep analysis workflow
+├── agents/
+│   ├── claude.yaml                  # Claude agent system prompt + tool config
+│   └── openai.yaml                  # Codex / OpenAI agent configuration
 ├── references/
-│   ├── configuration.md
-│   └── review-policy.md
-└── scripts/
-    ├── audit_code.py
-    └── rules_builtin.py
+│   ├── configuration.md             # TOML config, custom rules, baselines
+│   ├── deep-analysis.md             # LLM deep review methodology (7 dimensions)
+│   └── review-policy.md             # Severity guidance + triage rules
+├── scripts/
+│   ├── audit_code.py                # Deterministic fast-gate scanner engine
+│   └── rules_builtin.py             # 48 built-in detection rule catalog
+└── tests/
+    ├── test_audit_code.py           # Scanner feature tests
+    ├── test_engine_features.py      # Engine feature tests
+    └── test_rules.py                # Rule coverage tests
 ```
 
 Use the skill when asking Codex to perform release-readiness review, explain findings, add targeted tests, or wire the scanner into CI.
