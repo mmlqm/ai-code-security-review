@@ -2,9 +2,9 @@
 """
 Variable-based taint tracking for same-file data flow detection.
 
-Catches patterns the regex scanner misses:
+Catches patterns the regex scanner misses:  # audit-code: ignore-next-line sql-python-variable-track
     sql = f"SELECT * FROM users WHERE id = {user_input}"   # line 5
-    cursor.execute(sql)                                      # line 20 ← missed by regex
+    cursor.execute(sql)                                      # line 20 ← missed by regex  audit-code: ignore sql-python-variable-track
 
 Design: lightweight, same-file only, operates on string-level patterns.
 Not a full CFG — just catches the most common "assign then use" pattern.

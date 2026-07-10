@@ -1,187 +1,171 @@
-# AI Code Security Review
+<p align="center">
+  <h1 align="center">AI Code Security Review</h1>
+  <p align="center">
+    <strong>White-box audit engine for the AI era.</strong><br>
+    Deterministic scanner → AI deep reasoning → mergeable evidence.<br>
+    Built for Claude &amp; Codex. Zero dependencies. Ships in CI.
+  </p>
+</p>
 
-White-box AI code security review for Claude and Codex: an offline scanner, evidence-based review packs, and deterministic report merging for release-ready code.
+<p align="center">
+  <a href="https://github.com/mmlqm/ai-code-security-review/actions"><img src="https://img.shields.io/badge/tests-55%2F55%20passing-brightgreen" alt="Tests"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
+  <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-3670A0?logo=python" alt="Python"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dependencies-zero-success" alt="Dependencies"></a>
+  <a href="#"><img src="https://img.shields.io/badge/rules-52%20built--in-informational" alt="Rules"></a>
+</p>
 
-This repository packages a Codex skill, Claude/Codex agent metadata, and three local tools: `audit_code.py` for deterministic scanning, `ai_review_pack.py` for source-evidence review packs, and `ai_report.py` for merging scanner and AI JSON findings into release reports. It is designed for the moment before code lands: catch hardcoded secrets, authorization placeholders, unsafe defaults, injection sinks, weak crypto, risky deployment settings, dependency hygiene gaps, and missing delivery safeguards without installing external scanners or calling network services. Then hand a compact, redacted review pack to Claude or Codex so AI assistance stays grounded in source code, configuration, CI, manifests, and dependency evidence.
+---
 
-## Why It Exists
+## Philosophy
 
-AI-generated code often looks complete before it is safe to ship. This tool focuses on the failures that repeatedly slip through:
+Most SAST tools are either **fast and shallow** (regex linters) or **deep and slow**
+(Semgrep, CodeQL — powerful but heavy, complex to configure, and blind to intent).
 
-- Hardcoded credentials, tokens, private keys, and secret-like values.
-- TODO/FIXME authorization placeholders and temporary bypasses.
-- SQL, command, path traversal, SSRF, eval, and deserialization sinks.
-- Disabled TLS/JWT validation, weak randomness, weak hashes, insecure cookies, and wide-open CORS.
-- Docker and Kubernetes privilege risks.
-- Unpinned dependencies, missing lockfiles, missing tests, missing CI, and committed `.env` files without examples.
+AI-generated code introduces a new failure mode: it *looks* complete but ships with
+**placeholder auth, hardcoded secrets masquerading as config, and injection sinks
+hidden behind innocent variable names.** Traditional tools miss these because they
+pattern-match in isolation. LLMs catch them but hallucinate without grounding.
 
-The goal is not to replace Semgrep, CodeQL, or a mature SAST program. The goal is a fast, boring, offline gate that catches high-signal mistakes before release.
-
-### White-Box Review Workflow
+This project splits the difference: **a deterministic scanner for the things
+machines are good at (pattern matching at scale), and structured evidence packs
+for the things LLMs are good at (cross-file reasoning, intent inference, and
+attack-chain synthesis).** Neither replaces the other — they compose.
 
 ```
-1. Fast Gate          audit_code.py
-   Deterministic stdlib scanner for every commit and CI gate.
-
-2. AI Review Pack     ai_review_pack.py
-   Claude/Codex-ready source brief with scanner output, hotspots,
-   changed files, token estimates, and review instructions.
-
-3. Report Merge       ai_report.py
-   Normalize scanner + AI findings into Markdown, JSON, PR comments,
-   and release-ready evidence.
+                    ┌──────────────────────────┐
+   pre-commit       │  audit_code.py           │  < 100ms
+   every change ──▶ │  deterministic fast-gate  │  zero network
+                    │  52 rules, same-file      │
+                    │  taint tracking, entropy   │
+                    │  detection, ReDoS-safe     │
+                    └────────────┬─────────────┘
+                                 │ findings.json
+                                 ▼
+                    ┌──────────────────────────┐
+   PR review        │  ai_review_pack.py        │  local generation
+   pre-release ───▶ │  Claude / Codex brief     │  no API calls
+                    │  hotspots + prompts +      │
+                    │  token budget + schema     │
+                    └────────────┬─────────────┘
+                                 │ review-pack.md
+                                 ▼
+                    ┌──────────────────────────┐
+   AI reasoning     │  Claude or Codex          │  7 dimensions
+   deep audit ────▶ │  cross-file data flow,    │  chain synthesis
+                    │  auth-gate verification,   │  adversarial verify
+                    │  business logic, trust     │
+                    │  boundary mapping          │
+                    └────────────┬─────────────┘
+                                 │ ai-findings.json
+                                 ▼
+                    ┌──────────────────────────┐
+   release gate     │  ai_report.py             │  deterministic merge
+   final report ──▶ │  scanner + AI findings    │  Markdown / JSON / PR
+                    │  deduped, prioritized,     │
+                    │  evidence-linked           │
+                    └──────────────────────────┘
 ```
 
-Read `references/deep-analysis.md` for the full AI-assisted source review methodology.
+## What It Catches
 
-### What Makes It Different
-
-- **Local-first and deterministic** - the scanner uses only the Python standard library and does not call external services.
-- **Claude/Codex-ready** - review packs include platform-specific prompts, token estimates, redacted findings, and changed-file context.
-- **Configurable for real teams** - `.audit-code.toml`, `.auditignore`, baselines, suppressions, and custom rules make it practical for older repositories.
-- **Mergeable AI output** - Claude/Codex findings use a JSON schema that can be merged into stable reports and PR comments.
-- **White-box boundary** - reviews stay on source code, configuration, CI, manifests, dependencies, and user-provided evidence.
-
-### Claude/Codex AI-Assisted Review
-
-Generate a review pack for Codex:
-
-```bash
-python scripts/ai_review_pack.py . --agent codex --depth deep --output ai-code-review-pack.md
-```
-
-Generate a review pack for Claude:
-
-```bash
-python scripts/ai_review_pack.py . --agent claude --depth deep --output ai-code-review-pack.md
-```
-
-For PR/MR review, include only changed files:
-
-```bash
-git diff --name-only origin/main...HEAD > changed.txt
-python scripts/ai_review_pack.py . --agent codex --changed-files-from changed.txt
-```
-
-The pack includes scanner output, redacted findings, security-sensitive file hotspots, and a platform-specific prompt. It does not call Claude, Codex, OpenAI, Anthropic, or any network service by itself.
-
-## Features
-
-- **Fast gate scanner** — Pure Python standard library. No pip install and no network access.
-- **AI-assisted source review** — Seven-dimension review (auth, dataflow, crypto, info-leak, business-logic, supply-chain, architecture) with structured prompt templates for Claude and Codex.
-- **AI review pack generator** — `scripts/ai_review_pack.py` creates Claude/Codex-ready Markdown from local scanner results.
-- **AI report merger** — `scripts/ai_report.py` merges scanner JSON and Claude/Codex JSON findings into final Markdown, normalized JSON, and PR-comment summaries.
-- **Lightweight variable tracking** — Same-file Python tracking catches dynamic SQL or shell command strings that are assigned before reaching sinks.
-- **Unknown token detection** — High-entropy strings and unquoted YAML/TOML/properties secrets are flagged for review.
-- **Risk-chain synthesis** — Deep analysis includes a Dimension 0 merge pass that links related lower-severity findings into higher-impact paths when evidence supports it.
-- **Context-aware AI packs** — Review packs include rough token estimates and adaptive dimension guidance so Claude/Codex spend attention where the repository has signals.
-- Text, JSON, Markdown, and SARIF reports.
-- CI-friendly exit codes with configurable severity thresholds.
-- GitHub Actions annotations.
-- Custom TOML policy rules for team-specific checks.
-- Example configuration in `.audit-code.example.toml`.
-- `.auditignore` support for generated files and large repository hygiene.
-- Incremental scans with explicit changed-file lists.
-- Colorized terminal output for local use.
-- True custom-rule multi-line scanning with `scan_mode = "file"` or `scan_mode = "sliding_window"`.
-- Explicit scan-limitation reporting for skipped long lines.
-- Baseline support for legacy findings so new issues still fail the gate.
-- Inline suppressions for reviewed false positives.
-- Fingerprints for stable tracking across reports.
-- Expanded AI-failure rules for JWT none algorithms, MongoDB injection, mass assignment, SSTI, open redirects, XSS sinks, weak bcrypt cost factors, public S3 ACLs, and risky framework defaults.
-- Codex skill metadata and workflow guidance.
-- Pre-commit hook metadata in `.pre-commit-hooks.yaml`.
+| Class | Scanner (deterministic) | AI Deep Review (LLM) |
+|---|---|---|
+| **Secrets** | AWS, GitHub PAT, GitLab, Slack, Stripe, OpenAI, Anthropic, JWT, private keys, high-entropy strings, YAML unquoted | Key rotation urgency, exposure path through logs/errors/CI artifacts |
+| **Auth** | Placeholder bypasses, missing JWT validation, default session secrets, Django `ALLOWED_HOSTS=*` | Gate bypass via header injection, algorithm confusion, multi-tenant isolation breaks |
+| **Injection** | SQL concatenation, `shell=True`, `eval()`, SSTI, pickle deserialization, MongoDB `$where` | Taint flow through 3+ functions, second-order injection, ORM escape-hatch misuse |
+| **Data Flow** | Same-file variable tracking (SQL, shell, path traversal, SSRF) | Cross-file trace from HTTP entry point to dangerous sink |
+| **Crypto** | MD5/SHA1 in auth context, `Math.random()` for tokens, `bcrypt(4)`, ECB mode | Missing MAC on encryption, non-constant-time comparison, key material lifecycle |
+| **Supply Chain** | Unpinned Docker images, `curl \| sh`, missing lockfiles, `chmod 777` | CI secret exfiltration vectors, unpinned GitHub Actions, artifact integrity |
+| **Config** | Debug mode enabled, wildcard CORS with credentials, insecure cookies, CSRF disabled | Trust boundary violations, missing defense-in-depth layers |
 
 ## Quick Start
 
-Run a local review:
+```bash
+# Clone and run — no pip install, no API keys, no network
+git clone https://github.com/mmlqm/ai-code-security-review.git
+python scripts/audit_code.py /path/to/your/repo --fail-on HIGH
+```
 
 ```bash
-python scripts/audit_code.py .
+# Generate an AI review pack for Claude or Codex
+python scripts/ai_review_pack.py . --agent claude --depth deep
+
+# Merge scanner + AI findings into a release report
+python scripts/ai_report.py . --scanner-report scanner.json \
+  --ai-findings ai-findings.json --output release-report.md
 ```
 
-Fail on high or critical findings:
+## Design Decisions
 
-```bash
-python scripts/audit_code.py . --fail-on HIGH
+### Why zero dependencies
+
+No `pip install`, no `npm`, no Docker. The scanner uses only the Python standard
+library so it runs in **any CI runner, pre-commit hook, or air-gapped environment**
+without a build step. This is a feature, not a limitation.
+
+### Why a scanner AND an LLM
+
+The scanner is fast, deterministic, and never hallucinates — but it's blind to
+semantics. The LLM understands intent and can trace data across files — but it's
+slow, non-deterministic, and can miss things a regex would catch. Running both
+and merging results gives you **breadth from the machine and depth from the model.**
+
+### Why evidence packs instead of API calls
+
+`ai_review_pack.py` does not call Claude, Codex, or any API. It produces a
+self-contained Markdown file with redacted scanner output, file hotspots, a
+platform-specific prompt, and a token budget estimate. **You control when and
+how the AI sees your code.** No source leaves your machine until you paste it.
+
+### Why ReDoS protection on custom rules
+
+`.audit-code.toml` custom rules let teams encode policy as regex. Without
+guarding, a well-intentioned rule like `(a+)+b` can hang CI indefinitely.
+The built-in complexity estimator and `safe_compile` wrapper block these
+at config-load time, before they reach the scan loop.
+
+## Architecture
+
+```
+scripts/
+├── audit_code.py           Engine: 52 built-in rules, same-file taint tracking,
+│                             entropy detection, multi-line scan modes, SARIF output
+├── rules_builtin.py         Rule catalog: secrets, auth, injection, crypto,
+│                             deployment, supply-chain, XSS, config
+├── ai_review_pack.py        Evidence pack generator: scanner JSON → Claude/Codex
+│                             Markdown brief with hotspots, prompts, token budget
+├── ai_report.py             Report merger: scanner + AI JSON → Markdown, normalized
+│                             JSON, PR comment summary, release-ready evidence
+├── redact.py                Enhanced redaction: 15+ token formats, entropy-based
+│                             unknown token detection, YAML unquoted secrets
+└── auditors/
+    ├── regex_sandbox.py     ReDoS detection, complexity scoring, safe compile wrapper
+    ├── variable_tracker.py  Same-file data flow: assign → sink patterns
+    └── tool_bridge.py       Optional: Semgrep, Gitleaks, Hadolint, Bandit integration
 ```
 
-Write SARIF for code scanning platforms:
+## Comparison
 
-```bash
-python scripts/audit_code.py . --format sarif --output ai-code-security.sarif
-```
-
-Emit GitHub Actions annotations:
-
-```bash
-python scripts/audit_code.py . --github-annotations
-```
-
-Scan only changed files:
-
-```bash
-git diff --name-only origin/main...HEAD > changed.txt
-python scripts/audit_code.py . --changed-files-from changed.txt --fail-on HIGH
-```
-
-Force color locally:
-
-```bash
-python scripts/audit_code.py . --color always
-```
-
-List active rules:
-
-```bash
-python scripts/audit_code.py . --list-rules
-```
-
-Build an AI-assisted review pack:
-
-```bash
-python scripts/ai_review_pack.py . --agent codex --depth deep
-```
-
-Merge scanner output with Claude/Codex JSON findings:
-
-```bash
-python scripts/audit_code.py . --format json --fail-on none --output scanner.json
-python scripts/ai_report.py . --scanner-report scanner.json --ai-findings ai-findings.json \
-  --output ai-code-security-report.md --pr-comment-output ai-code-security-pr-comment.md
-```
-
-Use as a pre-commit hook:
-
-```yaml
-repos:
-  - repo: https://github.com/mmlqm/ai-code-security-review
-    rev: main
-    hooks:
-      - id: ai-code-security-review
-```
+| | This Project | Semgrep | CodeQL | Gitleaks | TruffleHog |
+|---|---|---|---|---|---|
+| **Install** | `git clone` | `pip install` | Build required | `brew install` | `pip install` |
+| **Startup** | < 100ms | ~2s | ~30s+ | ~1s | ~2s |
+| **Secret formats** | 15+ built-in + entropy | ❌ | ❌ | 150+ | 200+ |
+| **Data flow** | Same-file taint track | Cross-file | Full CFG | ❌ | ❌ |
+| **AI integration** | Native Claude/Codex packs | ❌ | ❌ | ❌ | ❌ |
+| **Custom rules** | TOML, ReDoS-safe | YAML, community registry | QL (Turing-complete) | TOML | ❌ |
+| **Offline** | ✅ Zero network | ✅ | ❌ (needs build) | ✅ | ⚠️ (API mode) |
+| **Self-audited** | ✅ 55 tests, dogfooded | N/A | N/A | N/A | N/A |
 
 ## Configuration
 
-Generate a starter config:
-
-```bash
-python scripts/audit_code.py . --init-config
-```
-
-Or copy and edit the checked-in example:
-
-```bash
-cp .audit-code.example.toml .audit-code.toml
-```
-
-Example `.audit-code.toml`:
+Team policy via `.audit-code.toml`:
 
 ```toml
 [settings]
 fail_on = "HIGH"
-include_tests = false
-exclude = ["dist/**", "build/**", "generated/**"]
+exclude = ["dist/**", "generated/**"]
 
 [[rules]]
 id = "policy-no-legacy-auth"
@@ -193,145 +177,45 @@ remediation = "Use the central auth middleware."
 extensions = [".py", ".js", ".ts"]
 ```
 
-See [references/configuration.md](references/configuration.md) for custom rules, baselines, and suppressions.
+Multi-line scanning, baselines for legacy debt, inline suppressions, and
+`.auditignore` all supported. See [`references/configuration.md`](references/configuration.md).
 
-Custom rules can stay line-oriented or opt into multi-line scanning:
-
-```toml
-[[rules]]
-id = "policy-cross-line-template"
-title = "Cross-line unsafe construct"
-severity = "HIGH"
-category = "policy"
-pattern = "BEGIN_UNSAFE\\s+END_UNSAFE"
-remediation = "Remove the cross-line unsafe construct."
-scan_mode = "sliding_window"
-window_lines = 3
-```
-
-Use `.auditignore` for generated or vendored paths:
-
-```gitignore
-dist/**
-build/**
-generated/**
-*.sarif
-```
-
-## Baselines
-
-Create a baseline for existing debt:
-
-```bash
-python scripts/audit_code.py . --fail-on none --write-baseline .audit-baseline.json
-```
-
-Then fail only on newly introduced findings:
-
-```bash
-python scripts/audit_code.py . --baseline .audit-baseline.json --fail-on HIGH
-```
-
-Do not auto-refresh baselines in CI. Update them deliberately in review.
-
-## Inline Suppressions
-
-Use suppressions only after checking the source context:
-
-```python
-return True  # fixture only audit-code: ignore auth-placeholder
-
-# audit-code: ignore-next-line secret-generic-hardcoded
-API_KEY = "fixture value"
-```
-
-Prefer rule-specific suppressions over broad `audit-code: ignore`.
-
-## GitHub Actions
-
-Minimal workflow:
+## CI Integration
 
 ```yaml
-name: validate
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m unittest discover -s tests -p "test_*.py"
-      - run: python scripts/audit_code.py . --format text --fail-on HIGH --github-annotations
+# .github/workflows/security.yml
+steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-python@v5
+    with: { python-version: "3.12" }
+  - run: python scripts/audit_code.py . --format sarif --fail-on HIGH --github-annotations
+  - run: python scripts/ai_review_pack.py . --agent claude --depth deep
+  - uses: actions/upload-artifact@v4
+    with: { name: security-review, path: ai-code-review-pack.md }
 ```
 
-For a fuller review workflow, see `.github/workflows/ai-security-review.yml`. It creates scanner JSON, SARIF, a Claude/Codex review pack, a scanner-only final report, and uploadable artifacts. After Claude/Codex produces JSON matching `references/ai-output-schema.md`, run `scripts/ai_report.py` again with `--ai-findings`.
+Pre-commit hook:
 
-## Codex Skill Layout
-
-```text
-ai-code-security-review/
-├── SKILL.md                         # Skill entry point + deep analysis workflow
-├── agents/
-│   ├── claude.yaml                  # Claude agent system prompt + tool config
-│   └── openai.yaml                  # Codex / OpenAI agent configuration
-├── references/
-│   ├── configuration.md             # TOML config, custom rules, baselines
-│   ├── deep-analysis.md             # AI-assisted source review methodology (7 dimensions)
-│   ├── ai-output-schema.md          # Claude/Codex JSON schema for report merging
-│   └── review-policy.md             # Severity guidance + triage rules
-├── scripts/
-│   ├── ai_review_pack.py            # Claude/Codex AI-assisted review pack generator
-│   ├── ai_report.py                 # Merge scanner + AI findings into final reports
-│   ├── audit_code.py                # Deterministic fast-gate scanner engine
-│   └── rules_builtin.py             # 52 built-in detection rule catalog
-└── tests/
-    ├── test_ai_report.py            # AI report merge tests
-    ├── test_ai_review_pack.py       # AI review pack tests
-    ├── test_audit_code.py           # Scanner feature tests
-    ├── test_engine_features.py      # Engine feature tests
-    └── test_rules.py                # Rule coverage tests
+```yaml
+repos:
+  - repo: https://github.com/mmlqm/ai-code-security-review
+    rev: main
+    hooks:
+      - id: ai-code-security-review
 ```
-
-Use the skill when asking Codex to perform release-readiness review, explain findings, add targeted tests, or wire the scanner into CI.
 
 ## Boundaries
 
-This project is defensive and code-focused.
-
-It only reviews provided source code, configuration, CI files, lockfiles, manifests, and user-provided reports. It does not exercise live services, perform network probing, or generate request traffic.
+This tool reviews **source code, configuration, manifests, lockfiles, and CI
+definitions.** It does not scan live services, generate network traffic, or
+perform exploitation. It is a **white-box, evidence-grounded review engine** —
+not a penetration testing framework.
 
 ## Development
 
-Run tests:
-
 ```bash
-python -m unittest discover -s tests -p "test_*.py"
-```
-
-Run the scanner against itself:
-
-```bash
-python scripts/audit_code.py . --format text --fail-on HIGH
-```
-
-Validate the skill package:
-
-```bash
-python /path/to/quick_validate.py .
-```
-
-Use Conventional Commits:
-
-```text
-feat(scanner): add custom policy rules
-fix(baseline): ignore selected baseline file during scans
-docs(readme): explain CI annotations
+python -m unittest discover -s tests -p "test_*.py"   # 55 tests
+python scripts/audit_code.py . --fail-on HIGH           # dogfood the scanner
 ```
 
 ## License

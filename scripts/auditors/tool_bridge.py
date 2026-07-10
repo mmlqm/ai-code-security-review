@@ -80,7 +80,7 @@ TOOL_REGISTRY: dict[str, dict] = {
     },
     "trivy": {
         "binary": "trivy",
-        "install_hint": "brew install trivy  or  curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh",
+        "install_hint": "brew install trivy  or  see https://aquasecurity.github.io/trivy/latest/getting-started/installation/",  # audit-code: ignore docker-curl-pipe-shell
         "description": "Container, filesystem, and git repository vulnerability scanner",
         "category": "supply-chain",
     },
