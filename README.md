@@ -27,6 +27,8 @@ The goal is not to replace Semgrep, CodeQL, or a mature SAST program. The goal i
 - `.auditignore` support for generated files and large repository hygiene.
 - Incremental scans with explicit changed-file lists.
 - Colorized terminal output for local use.
+- True custom-rule multi-line scanning with `scan_mode = "file"` or `scan_mode = "sliding_window"`.
+- Explicit scan-limitation reporting for skipped long lines.
 - Baseline support for legacy findings so new issues still fail the gate.
 - Inline suppressions for reviewed false positives.
 - Fingerprints for stable tracking across reports.
@@ -105,6 +107,20 @@ extensions = [".py", ".js", ".ts"]
 ```
 
 See [references/configuration.md](references/configuration.md) for custom rules, baselines, and suppressions.
+
+Custom rules can stay line-oriented or opt into multi-line scanning:
+
+```toml
+[[rules]]
+id = "policy-cross-line-template"
+title = "Cross-line unsafe construct"
+severity = "HIGH"
+category = "policy"
+pattern = "BEGIN_UNSAFE\\s+END_UNSAFE"
+remediation = "Remove the cross-line unsafe construct."
+scan_mode = "sliding_window"
+window_lines = 3
+```
 
 Use `.auditignore` for generated or vendored paths:
 

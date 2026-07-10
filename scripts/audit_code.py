@@ -113,6 +113,8 @@ class AuditRule:
     sensitive_boost: bool = False
     validator: str = ""
     origin: str = "builtin"
+    scan_mode: str = "line"
+    window_lines: int = 1
 
     def matches_file(self, path: Path) -> bool:
         if not self.extensions and not self.filenames:
@@ -167,6 +169,7 @@ class AuditSummary:
     status: str
     suppressed_findings: int = 0
     baseline_findings: int = 0
+    long_lines_skipped: int = 0
     generated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -180,6 +183,7 @@ class AuditSummary:
             "status": self.status,
             "suppressed_findings": self.suppressed_findings,
             "baseline_findings": self.baseline_findings,
+            "long_lines_skipped": self.long_lines_skipped,
             "generated_at": self.generated_at,
         }
 
@@ -279,12 +283,28 @@ def _rule_from_config(raw: Any, config_path: Path, index: int) -> AuditRule:
         raise ValueError(f"{config_path}: rules[{index}].id is invalid: {rule_id}")
     severity = _as_severity(raw["severity"], f"rules[{index}].severity")
     ignore_case = bool(raw.get("ignore_case", True))
-    multiline = bool(raw.get("multiline", False))
+    anchors_cross_lines = bool(raw.get("anchors_cross_lines", False))
+    if raw.get("multiline"):
+        print(
+            "Warning: 'multiline' is deprecated; use 'anchors_cross_lines'. "
+            "For multi-line content matching use scan_mode = 'file' or 'sliding_window'.",
+            file=sys.stderr,
+        )
+        anchors_cross_lines = True
+    dotall = bool(raw.get("dotall", False))
+    scan_mode = str(raw.get("scan_mode", "line")).lower()
+    if scan_mode not in {"line", "file", "sliding_window"}:
+        raise ValueError(f"{config_path}: rules[{index}].scan_mode must be line, file, or sliding_window")
+    window_lines = _as_int(raw.get("window_lines", 5), f"rules[{index}].window_lines")
+    if window_lines < 1:
+        raise ValueError(f"{config_path}: rules[{index}].window_lines must be >= 1")
     flags = 0
     if ignore_case:
         flags |= re.IGNORECASE
-    if multiline:
+    if anchors_cross_lines:
         flags |= re.MULTILINE
+    if dotall:
+        flags |= re.DOTALL
     try:
         pattern = re.compile(str(raw["pattern"]), flags)
     except re.error as exc:
@@ -304,6 +324,8 @@ def _rule_from_config(raw: Any, config_path: Path, index: int) -> AuditRule:
         scan_comments=bool(raw.get("scan_comments", False)),
         sensitive_boost=bool(raw.get("sensitive_boost", False)),
         origin="custom",
+        scan_mode=scan_mode,
+        window_lines=window_lines,
     )
 
 
@@ -430,6 +452,7 @@ def scan_project(
     scanned = 0
     skipped = 0
     suppressed = 0
+    long_lines_skipped = 0
 
     for path, was_skipped in _iter_candidate_files(
         root_path, include_tests, max_file_size, excludes, changed_paths
@@ -443,9 +466,10 @@ def scan_project(
             skipped += 1
             continue
         scanned += 1
-        file_findings, file_suppressed = _scan_file(path, project_root, text, rules)
+        file_findings, file_suppressed, file_long_lines = _scan_file(path, project_root, text, rules)
         findings.extend(file_findings)
         suppressed += file_suppressed
+        long_lines_skipped += file_long_lines
 
     if root_path.is_dir():
         findings.extend(_project_level_checks(project_root))
@@ -482,6 +506,7 @@ def scan_project(
         status=status,
         suppressed_findings=suppressed,
         baseline_findings=baseline_count,
+        long_lines_skipped=long_lines_skipped,
     )
     return AuditReport(summary=summary, findings=findings)
 
@@ -618,13 +643,19 @@ def _read_text(path: Path) -> str:
         return raw.decode("latin-1")
 
 
-def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]) -> tuple[list[AuditFinding], int]:
+def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]) -> tuple[list[AuditFinding], int, int]:
     rel = _rel(path, project_root)
     findings: list[AuditFinding] = []
     suppressed = 0
+    long_lines_skipped = 0
     next_line_suppressions: dict[int, set[str]] = {}
-    for line_no, line in enumerate(text.splitlines(), 1):
+    lines = text.splitlines()
+    line_rules = [rule for rule in rules if rule.scan_mode == "line"]
+    content_rules = [rule for rule in rules if rule.scan_mode != "line"]
+
+    for line_no, line in enumerate(lines, 1):
         if len(line) > 5000:
+            long_lines_skipped += 1
             continue
         current_suppressions = set(next_line_suppressions.pop(line_no, set()))
         line_suppressions, next_suppressions = _parse_suppressions(line)
@@ -632,7 +663,7 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
         if next_suppressions:
             next_line_suppressions.setdefault(line_no + 1, set()).update(next_suppressions)
         is_comment = _is_probable_comment(line, path.suffix.lower())
-        for rule in rules:
+        for rule in line_rules:
             if not rule.matches_file(path):
                 continue
             if is_comment and not rule.scan_comments:
@@ -647,22 +678,111 @@ def _scan_file(path: Path, project_root: Path, text: str, rules: list[AuditRule]
                 continue
             severity = _effective_severity(rule, rel)
             snippet = _redact(line.strip())
-            finding = AuditFinding(
-                rule_id=rule.id,
-                title=rule.title,
-                severity=severity,
-                category=rule.category,
-                path=rel,
-                line=line_no,
-                column=max(match.start() + 1, 1),
-                snippet=snippet,
-                remediation=rule.remediation,
-                confidence=rule.confidence,
-                cwe=rule.cwe,
+            findings.append(
+                _make_finding(
+                    rule=rule,
+                    rel=rel,
+                    line_no=line_no,
+                    column=max(match.start() + 1, 1),
+                    snippet=snippet,
+                    severity=severity,
+                )
             )
-            finding.fingerprint = _fingerprint(finding)
-            findings.append(finding)
-    return findings, suppressed
+
+    for rule in content_rules:
+        if not rule.matches_file(path):
+            continue
+        for match, window_start, window_text in _iter_content_matches(rule, text, lines):
+            line_no = window_start + window_text[:match.start()].count("\n")
+            line_text = lines[line_no - 1] if 1 <= line_no <= len(lines) else ""
+            suppressions, _ = _parse_suppressions(line_text)
+            if _is_suppressed(rule.id, suppressions):
+                suppressed += 1
+                continue
+            raw_snippet = match.group(0).replace("\r", " ").replace("\n", " ")
+            snippet = _redact(raw_snippet.strip())
+            severity = _effective_severity(rule, rel)
+            findings.append(
+                _make_finding(
+                    rule=rule,
+                    rel=rel,
+                    line_no=line_no,
+                    column=max(_column_for_offset(window_text, match.start()) + 1, 1),
+                    snippet=snippet,
+                    severity=severity,
+                )
+            )
+
+    if long_lines_skipped:
+        finding = AuditFinding(
+            rule_id="scan-long-lines-skipped",
+            title=f"{long_lines_skipped} long lines skipped",
+            severity="INFO",
+            category="scan-limitation",
+            path=rel,
+            line=1,
+            column=1,
+            snippet=f"{long_lines_skipped} lines longer than 5000 characters were not scanned.",
+            remediation="Scan the unminified source or reduce generated/bundled line length.",
+            confidence="high",
+        )
+        finding.fingerprint = _fingerprint(finding)
+        findings.append(finding)
+
+    return findings, suppressed, long_lines_skipped
+
+
+def _iter_content_matches(
+    rule: AuditRule,
+    text: str,
+    lines: list[str],
+) -> Iterable[tuple[re.Match[str], int, str]]:
+    if rule.scan_mode == "file":
+        for match in rule.pattern.finditer(text):
+            yield match, 1, text
+        return
+
+    if rule.scan_mode == "sliding_window":
+        window = max(rule.window_lines, 1)
+        for start_index in range(0, len(lines)):
+            chunk = "\n".join(lines[start_index:start_index + window])
+            if not chunk:
+                continue
+            for match in rule.pattern.finditer(chunk):
+                yield match, start_index + 1, chunk
+
+
+def _column_for_offset(text: str, offset: int) -> int:
+    previous_newline = text.rfind("\n", 0, offset)
+    if previous_newline == -1:
+        return offset
+    return offset - previous_newline - 1
+
+
+def _make_finding(
+    *,
+    rule: AuditRule,
+    rel: str,
+    line_no: int,
+    column: int,
+    snippet: str,
+    severity: str,
+) -> AuditFinding:
+    finding = AuditFinding(
+        rule_id=rule.id,
+        title=rule.title,
+        severity=severity,
+        category=rule.category,
+        path=rel,
+        line=line_no,
+        column=column,
+        snippet=snippet,
+        remediation=rule.remediation,
+        confidence=rule.confidence,
+        cwe=rule.cwe,
+    )
+    finding.fingerprint = _fingerprint(finding)
+    return finding
 
 
 def _project_level_checks(root: Path) -> list[AuditFinding]:
@@ -770,7 +890,9 @@ def _validate_secret_value(match: re.Match[str], line: str, path: Path) -> bool:
 
 def _validate_requirements_unpinned(match: re.Match[str], line: str, path: Path) -> bool:
     stripped = line.strip()
-    if not stripped or stripped.startswith(("#", "-", "--")):
+    if "#" in stripped:
+        stripped = stripped.split("#", 1)[0].strip()
+    if not stripped or stripped.startswith(("-", "--")):
         return False
     if "://" in stripped or " @ " in stripped:
         return False
@@ -861,9 +983,12 @@ def _has_tests(root: Path) -> bool:
     for candidate in ("tests", "test", "spec", "__tests__"):
         if (root / candidate).exists():
             return True
-    for path in root.rglob("*"):
-        if path.is_file() and _is_test_path(_rel(path, root)):
-            return True
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in DEFAULT_IGNORED_DIRS]
+        current = Path(dirpath)
+        for filename in filenames:
+            if _is_test_path(_rel(current / filename, root)):
+                return True
     return False
 
 
@@ -922,7 +1047,7 @@ def _render_text(report: AuditReport, *, limit: int, color: bool = False) -> str
         f"Status: {_paint(status, status, color)}  Score: {s.score}/100",
         f"Files: {s.scanned_files} scanned, {s.skipped_files} skipped",
         "Findings: " + ", ".join(f"{sev}={s.counts.get(sev, 0)}" for sev in SEVERITIES),
-        f"Suppressed: {s.suppressed_findings}  Baseline-filtered: {s.baseline_findings}",
+        f"Suppressed: {s.suppressed_findings}  Baseline-filtered: {s.baseline_findings}  Long-lines-skipped: {s.long_lines_skipped}",
         "",
     ]
     if not report.findings:
@@ -954,6 +1079,7 @@ def _render_markdown(report: AuditReport, *, limit: int) -> str:
         f"- **Findings:** " + ", ".join(f"{sev}={s.counts.get(sev, 0)}" for sev in SEVERITIES),
         f"- **Suppressed:** {s.suppressed_findings}",
         f"- **Baseline-filtered:** {s.baseline_findings}",
+        f"- **Long-lines-skipped:** {s.long_lines_skipped}",
         "",
         "## Findings",
         "",
@@ -1049,6 +1175,8 @@ def render_rules(rules: list[AuditRule], fmt: str = "text") -> str:
                 "confidence": rule.confidence,
                 "cwe": rule.cwe,
                 "origin": rule.origin,
+                "scan_mode": rule.scan_mode,
+                "window_lines": rule.window_lines,
                 "extensions": list(rule.extensions),
                 "filenames": list(rule.filenames),
                 "scan_comments": rule.scan_comments,
@@ -1062,6 +1190,10 @@ def render_rules(rules: list[AuditRule], fmt: str = "text") -> str:
             scope.append("extensions=" + ",".join(rule.extensions))
         if rule.filenames:
             scope.append("filenames=" + ",".join(rule.filenames))
+        if rule.scan_mode != "line":
+            scope.append(f"scan_mode={rule.scan_mode}")
+            if rule.scan_mode == "sliding_window":
+                scope.append(f"window_lines={rule.window_lines}")
         scope_text = f" ({'; '.join(scope)})" if scope else ""
         lines.append(f"[{rule.severity}] {rule.id} - {rule.title} [{rule.origin}]{scope_text}")
     return "\n".join(lines)

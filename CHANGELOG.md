@@ -12,6 +12,10 @@ This project uses Conventional Commits for commit messages.
 - `.auditignore` support.
 - Incremental changed-file scanning with `--changed-files` and `--changed-files-from`.
 - Colorized text output with `--color auto|always|never`.
+- Custom-rule `multiline` deprecation in favor of `anchors_cross_lines`.
+- True multi-line custom-rule scanning with `scan_mode = "file"` and `scan_mode = "sliding_window"`.
+- INFO findings and summary counts for lines skipped because they exceed the scanner line-length limit.
+- Requirements inline-comment handling for dependency pin checks.
 - Fourteen additional built-in rules covering JWT none algorithms, MongoDB injection, mass assignment, SSTI, open redirects, XSS sinks, wildcard credentialed CORS, weak bcrypt rounds, public S3 ACLs, and framework default risks.
 - Expanded test suite for scanner rules and engine features.
 

@@ -67,6 +67,7 @@ class AuditCodeTests(unittest.TestCase):
             self.assertEqual(len(sarif["runs"]), 1)
             self.assertIn("tool", sarif["runs"][0])
 
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib requires Python 3.11+")
     def test_custom_rule_from_toml_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -122,6 +123,7 @@ extensions = [".py"]
             self.assertEqual(second_report.findings, [])
             self.assertGreater(second_report.summary.baseline_findings, 0)
 
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib requires Python 3.11+")
     def test_rule_listing_includes_custom_origin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

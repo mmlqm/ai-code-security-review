@@ -1,4 +1,5 @@
 import io
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -68,6 +69,77 @@ class EngineFeatureTests(unittest.TestCase):
                 audit_code.main([str(root), "--color", "always", "--fail-on", "none"])
 
             self.assertIn("\033[", stream.getvalue())
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib requires Python 3.11+")
+    def test_sliding_window_custom_rule_matches_across_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                ".audit-code.toml",
+                """
+[[rules]]
+id = "policy-cross-line-secret"
+title = "Cross-line unsafe pattern"
+severity = "HIGH"
+category = "policy"
+pattern = "BEGIN_UNSAFE\\\\s+END_UNSAFE"
+remediation = "Remove the cross-line unsafe pattern."
+scan_mode = "sliding_window"
+window_lines = 2
+""",
+            )
+            self.write(root, "sample.py", "BEGIN_UNSAFE\nEND_UNSAFE\n")
+
+            report = audit_code.scan_project(root)
+
+            self.assertIn("policy-cross-line-secret", {finding.rule_id for finding in report.findings})
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib requires Python 3.11+")
+    def test_deprecated_multiline_maps_to_anchors_cross_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                ".audit-code.toml",
+                """
+[[rules]]
+id = "policy-anchor-second-line"
+title = "Anchor second line"
+severity = "LOW"
+category = "policy"
+pattern = "^SECOND_LINE"
+remediation = "Review the second line."
+scan_mode = "file"
+multiline = true
+""",
+            )
+            self.write(root, "sample.py", "FIRST_LINE\nSECOND_LINE\n")
+
+            report = audit_code.scan_project(root)
+
+            self.assertIn("policy-anchor-second-line", {finding.rule_id for finding in report.findings})
+
+    def test_requirements_inline_comments_are_ignored_for_pin_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "requirements.txt", "flask==3.0.0  # pinned\nrequests  # not pinned\n")
+
+            report = audit_code.scan_project(root)
+            findings = [finding for finding in report.findings if finding.rule_id == "python-unpinned-dependency"]
+
+            self.assertEqual(len(findings), 1)
+            self.assertIn("requests", findings[0].snippet)
+
+    def test_long_lines_are_reported_as_scan_limitation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "bundle.js", "x" * 5001 + "\n")
+
+            report = audit_code.scan_project(root)
+
+            self.assertEqual(report.summary.long_lines_skipped, 1)
+            self.assertIn("scan-long-lines-skipped", {finding.rule_id for finding in report.findings})
 
 
 if __name__ == "__main__":

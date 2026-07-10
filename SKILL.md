@@ -67,7 +67,7 @@ Formats: `text`, `json`, `markdown`, `sarif`.
 
 Fail thresholds: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `none`.
 
-Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, and default gate settings. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
+Configuration: use `.audit-code.toml` for custom rules, disabled rules, excludes, baseline paths, multi-line scan modes, and default gate settings. Use `.auditignore` for generated or vendored paths. Read `references/configuration.md` before creating or editing project config.
 
 ## Manual Triage
 

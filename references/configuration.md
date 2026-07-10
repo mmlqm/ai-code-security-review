@@ -69,7 +69,31 @@ confidence = "high"
 
 Required fields: `id`, `title`, `severity`, `category`, `pattern`, `remediation`.
 
-Optional fields: `extensions`, `filenames`, `scan_comments`, `sensitive_boost`, `ignore_case`, `multiline`, `confidence`, `cwe`.
+Optional fields: `extensions`, `filenames`, `scan_comments`, `sensitive_boost`, `ignore_case`, `anchors_cross_lines`, `dotall`, `scan_mode`, `window_lines`, `confidence`, `cwe`.
+
+Use `anchors_cross_lines = true` when `^` and `$` anchors should apply to each line in a whole-file rule. The older `multiline = true` name is deprecated and maps to `anchors_cross_lines` for compatibility.
+
+Use `scan_mode` for actual multi-line content matching:
+
+```toml
+[[rules]]
+id = "policy-cross-line-template"
+title = "Cross-line template construction"
+severity = "HIGH"
+category = "policy"
+pattern = "BEGIN_UNSAFE\\s+END_UNSAFE"
+remediation = "Avoid building this construct across lines."
+scan_mode = "sliding_window"
+window_lines = 3
+```
+
+Supported scan modes:
+
+- `line`: default, fastest, scans one line at a time.
+- `sliding_window`: scans overlapping windows of `window_lines`.
+- `file`: scans the full file content.
+
+Use `dotall = true` only when `.` should match newlines.
 
 Keep custom rules narrow. Prefer a clear policy rule that catches one local risk over a broad expression that floods CI.
 
